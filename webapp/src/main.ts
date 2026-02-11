@@ -1,5 +1,5 @@
 import { getTelegramWebApp } from "./services/telegram.js";
-import { restoreToken, saveToken, exchangePairCode } from "./services/auth.js";
+import { restoreToken, saveToken, clearToken, exchangePairCode } from "./services/auth.js";
 import { FilesApiClient } from "./services/files-api.js";
 import { mountApp } from "./app.js";
 
@@ -32,7 +32,17 @@ async function authenticate(): Promise<string> {
   // 1. Try saved token (may fail if CloudStorage is unavailable)
   try {
     const saved = await restoreToken();
-    if (saved) return saved;
+    if (saved) {
+      // Validate token is still active on server
+      const client = new FilesApiClient(saved);
+      try {
+        await client.ls("/");
+        return saved;
+      } catch {
+        // Token invalid (server restarted?) — clear and continue
+        try { await clearToken(); } catch { /* ignore */ }
+      }
+    }
   } catch {
     // CloudStorage not available — continue to pairing
   }

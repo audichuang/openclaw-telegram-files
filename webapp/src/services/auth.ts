@@ -12,6 +12,11 @@ export async function saveToken(token: string): Promise<void> {
   await cloudStorageSet(TOKEN_KEY, token);
 }
 
+/** Clear saved token from Telegram CloudStorage. */
+export async function clearToken(): Promise<void> {
+  await cloudStorageSet(TOKEN_KEY, "");
+}
+
 /**
  * Exchange a one-time pairing code for a session token.
  */
