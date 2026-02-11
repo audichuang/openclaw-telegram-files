@@ -46,15 +46,35 @@ body {
   padding: 0;
 }
 
-/* Path header */
+/* Path header / Breadcrumb */
 .path-header {
   font-size: 13px;
   font-family: var(--font-mono);
   color: var(--tg-theme-hint-color);
   padding: 8px 0;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.breadcrumb-link {
+  color: var(--tg-theme-link-color);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.breadcrumb-link:active {
+  opacity: 0.6;
+}
+
+.breadcrumb-current {
+  color: var(--tg-theme-text-color);
+  font-weight: 600;
+}
+
+.breadcrumb-sep {
+  color: var(--tg-theme-hint-color);
 }
 
 /* Toggle hidden files button */

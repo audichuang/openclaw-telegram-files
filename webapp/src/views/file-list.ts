@@ -45,7 +45,32 @@ export function renderFileList(params: {
 
   const header = document.createElement("div");
   header.className = "path-header";
-  header.textContent = currentPath;
+
+  // Build clickable breadcrumb segments
+  const segments = currentPath.split("/").filter(Boolean);
+  for (let i = 0; i < segments.length; i++) {
+    if (i > 0) {
+      const sep = document.createElement("span");
+      sep.className = "breadcrumb-sep";
+      sep.textContent = " / ";
+      header.appendChild(sep);
+    }
+    const segPath = "/" + segments.slice(0, i + 1).join("/");
+    const link = document.createElement("span");
+    link.className = "breadcrumb-link";
+    link.textContent = segments[i];
+    if (i < segments.length - 1) {
+      // Clickable — navigate to that directory
+      link.addEventListener("click", () => onNavigate(segPath));
+    } else {
+      // Current segment — not clickable
+      link.className = "breadcrumb-current";
+    }
+    header.appendChild(link);
+  }
+  if (segments.length === 0) {
+    header.textContent = "/";
+  }
 
   const toggleBtn = document.createElement("button");
   toggleBtn.className = "toggle-hidden-btn";
