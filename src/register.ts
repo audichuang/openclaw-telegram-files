@@ -177,7 +177,8 @@ export function registerAll(api: OpenClawPluginApi) {
   // 1. Register /files command
   api.registerCommand({
     name: "files",
-    description: "Open file manager on mobile",
+    description: "Open file manager on mobile (optional: /files /path/to/dir)",
+    acceptsArgs: true,
     handler: async (ctx) => {
       const cfg = ctx.config;
       const externalUrl = pluginConfig?.externalUrl;
@@ -192,7 +193,13 @@ export function registerAll(api: OpenClawPluginApi) {
       }
 
       const code = createPairingCode(gatewayToken);
-      const miniAppUrl = `${externalUrl}/plugins/telegram-files/?pair=${code}`;
+
+      // Build Mini App URL with optional start path
+      const startPath = ctx.args?.trim() || "";
+      let miniAppUrl = `${externalUrl}/plugins/telegram-files/?pair=${code}`;
+      if (startPath) {
+        miniAppUrl += `&path=${encodeURIComponent(startPath)}`;
+      }
 
       if (ctx.channel === "telegram" && ctx.senderId) {
         const runtime = getFilesRuntime();

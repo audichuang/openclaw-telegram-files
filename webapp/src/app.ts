@@ -8,13 +8,17 @@ export function mountApp(container: HTMLElement, client: FilesApiClient): void {
   let currentPath = "/";
   let homeDir = "/";
 
+  // Check URL for a start path (from /files /some/path)
+  const urlParams = new URLSearchParams(window.location.search);
+  const startPath = urlParams.get("path");
+
   // Ask the server for the default start directory
   client.home()
     .then((result) => {
       homeDir = result.path;
-      showDir(result.path);
+      showDir(startPath || result.path);
     })
-    .catch(() => showDir("/"));
+    .catch(() => showDir(startPath || "/"));
 
   function showDir(dirPath: string) {
     currentPath = dirPath;
