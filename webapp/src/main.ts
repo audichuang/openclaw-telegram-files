@@ -18,8 +18,8 @@ async function main() {
 
     const client = new FilesApiClient(token);
 
-    // Quick validation: try listing root
-    await client.ls("/home");
+    // Quick validation: try fetching home directory
+    await client.home();
 
     app.innerHTML = "";
     mountApp(app, client);
@@ -36,7 +36,7 @@ async function authenticate(): Promise<string> {
       // Validate token is still active on server
       const client = new FilesApiClient(saved);
       try {
-        await client.ls("/");
+        await client.home();
         return saved;
       } catch {
         // Token invalid (server restarted?) — clear and continue

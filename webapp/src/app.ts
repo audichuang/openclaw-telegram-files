@@ -7,8 +7,10 @@ export function mountApp(container: HTMLElement, client: FilesApiClient): void {
   const webapp = getTelegramWebApp();
   let currentPath = "/";
 
-  // Start at home directory or root
-  showDir("/home");
+  // Ask the server for the default start directory
+  client.home()
+    .then((result) => showDir(result.path))
+    .catch(() => showDir("/"));
 
   function showDir(dirPath: string) {
     currentPath = dirPath;

@@ -270,6 +270,13 @@ export function registerAll(api: OpenClawPluginApi) {
         return true;
       }
 
+      // GET /api/home — return the default start directory
+      if (req.method === "GET" && subPath === "/api/home") {
+        const home = allowedPaths.length > 0 ? path.resolve(allowedPaths[0]) : os.homedir();
+        jsonResponse(res, 200, { path: home });
+        return true;
+      }
+
       // GET /api/ls?path=/some/dir
       if (req.method === "GET" && subPath === "/api/ls") {
         const dirPath = safePath(url.searchParams.get("path") || "/");

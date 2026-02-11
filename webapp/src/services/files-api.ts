@@ -90,6 +90,10 @@ export class FilesApiClient {
     await this.request("POST", "/mkdir", { path: dirPath });
   }
 
+  async home(): Promise<{ path: string }> {
+    return (await this.request("GET", "/home")) as { path: string };
+  }
+
   async search(basePath: string, query: string): Promise<SearchResponse> {
     const encodedPath = encodeURIComponent(basePath);
     const encodedQuery = encodeURIComponent(query);
