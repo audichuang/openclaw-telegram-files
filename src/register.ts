@@ -53,7 +53,7 @@ export function registerAll(api: OpenClawPluginApi) {
       const externalUrl = pluginConfig?.externalUrl;
 
       if (!externalUrl) {
-        return { text: "Please set plugins.telegram-files.externalUrl in config." };
+        return { text: "Please set externalUrl: openclaw config set plugins.entries.telegram-files.config.externalUrl \"https://your-host\"" };
       }
 
       const gatewayToken = cfg.gateway?.auth?.token;
