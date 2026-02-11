@@ -36,6 +36,7 @@ export function mountApp(container: HTMLElement, client: FilesApiClient): void {
       container,
       client,
       dirPath,
+      homeDir,
       onNavigate: (path) => showDir(path),
       onFileOpen: (path) => showEditor(path),
     });

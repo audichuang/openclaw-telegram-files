@@ -32,11 +32,12 @@ export function renderFileList(params: {
   currentPath: string;
   items: FileItem[];
   client: FilesApiClient;
+  homeDir: string;
   onNavigate: (path: string) => void;
   onFileOpen: (path: string) => void;
   onRefresh: () => void;
 }): void {
-  const { container, currentPath, items, client, onNavigate, onFileOpen, onRefresh } = params;
+  const { container, currentPath, items, client, homeDir, onNavigate, onFileOpen, onRefresh } = params;
   container.innerHTML = "";
 
   // --- Toolbar: path + hidden toggle ---
@@ -57,14 +58,17 @@ export function renderFileList(params: {
     }
     const segPath = "/" + segments.slice(0, i + 1).join("/");
     const link = document.createElement("span");
-    link.className = "breadcrumb-link";
     link.textContent = segments[i];
-    if (i < segments.length - 1) {
-      // Clickable — navigate to that directory
-      link.addEventListener("click", () => onNavigate(segPath));
-    } else {
+    if (i === segments.length - 1) {
       // Current segment — not clickable
       link.className = "breadcrumb-current";
+    } else if (segPath.length >= homeDir.length && segPath.startsWith(homeDir)) {
+      // Within or equal to homeDir — clickable
+      link.className = "breadcrumb-link";
+      link.addEventListener("click", () => onNavigate(segPath));
+    } else {
+      // Above homeDir — not clickable (would be 403)
+      link.className = "breadcrumb-disabled";
     }
     header.appendChild(link);
   }
@@ -365,10 +369,11 @@ export async function loadAndRenderFileList(params: {
   container: HTMLElement;
   client: FilesApiClient;
   dirPath: string;
+  homeDir: string;
   onNavigate: (path: string) => void;
   onFileOpen: (path: string) => void;
 }): Promise<void> {
-  const { container, client, dirPath, onNavigate, onFileOpen } = params;
+  const { container, client, dirPath, homeDir, onNavigate, onFileOpen } = params;
   container.innerHTML = "";
   const loadingMsg = document.createElement("div");
   loadingMsg.className = "status-message";
@@ -382,6 +387,7 @@ export async function loadAndRenderFileList(params: {
       currentPath: result.path,
       items: result.items,
       client,
+      homeDir,
       onNavigate,
       onFileOpen,
       onRefresh: () => loadAndRenderFileList(params),

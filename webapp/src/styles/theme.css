@@ -77,6 +77,10 @@ body {
   color: var(--tg-theme-hint-color);
 }
 
+.breadcrumb-disabled {
+  color: var(--tg-theme-hint-color);
+}
+
 /* Toggle hidden files button */
 .toggle-hidden-btn {
   font-size: 12px;
