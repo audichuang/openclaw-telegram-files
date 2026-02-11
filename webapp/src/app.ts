@@ -6,10 +6,14 @@ import { renderFileEditor } from "./views/file-editor.js";
 export function mountApp(container: HTMLElement, client: FilesApiClient): void {
   const webapp = getTelegramWebApp();
   let currentPath = "/";
+  let homeDir = "/";
 
   // Ask the server for the default start directory
   client.home()
-    .then((result) => showDir(result.path))
+    .then((result) => {
+      homeDir = result.path;
+      showDir(result.path);
+    })
     .catch(() => showDir("/"));
 
   function showDir(dirPath: string) {
@@ -17,8 +21,8 @@ export function mountApp(container: HTMLElement, client: FilesApiClient): void {
     webapp.BackButton.hide();
     webapp.MainButton.hide();
 
-    // Show back button if not at root
-    if (dirPath !== "/") {
+    // Show back button only if we're deeper than the home directory
+    if (dirPath !== "/" && dirPath !== homeDir) {
       webapp.BackButton.show();
       const handleBack = () => {
         webapp.BackButton.offClick(handleBack);
