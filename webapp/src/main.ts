@@ -2,6 +2,7 @@ import { getTelegramWebApp } from "./services/telegram.js";
 import { restoreToken, saveToken, clearToken, exchangePairCode } from "./services/auth.js";
 import { FilesApiClient } from "./services/files-api.js";
 import { mountApp } from "./app.js";
+import type { TelegramWebApp } from "./services/telegram.js";
 
 async function main() {
   const app = document.getElementById("app")!;
@@ -14,23 +15,29 @@ async function main() {
 
   try {
     const token = await authenticate();
-    showStatus(app, "Loading...");
-
     const client = new FilesApiClient(token);
-
-    // Quick validation: try fetching home directory
-    await client.home();
 
     app.innerHTML = "";
     mountApp(app, client);
   } catch (err) {
     const msg = (err as Error).message;
-    if (msg.includes("No saved token") || msg.includes("unauthorized") || msg.includes("expired")) {
+    if (isAuthError(msg)) {
+      // Clear stale token so next open doesn't repeat
+      try { await clearToken(); } catch { /* ignore */ }
       showExpiredUI(app, webapp);
     } else {
       showStatus(app, `Connection failed: ${msg}`, true);
     }
   }
+}
+
+function isAuthError(msg: string): boolean {
+  const lower = msg.toLowerCase();
+  return lower.includes("unauthorized") ||
+    lower.includes("expired") ||
+    lower.includes("no saved token") ||
+    lower.includes("invalid") ||
+    lower.includes("pairing");
 }
 
 async function authenticate(): Promise<string> {
@@ -45,6 +52,10 @@ async function authenticate(): Promise<string> {
       // Save (best-effort)
       try { await saveToken(token); } catch { /* CloudStorage unavailable */ }
 
+      // Validate the fresh token actually works
+      const client = new FilesApiClient(token);
+      await client.home();
+
       return token;
     } catch {
       // Pairing code already used or expired — fall through to saved token
@@ -54,19 +65,15 @@ async function authenticate(): Promise<string> {
   // 2. Try saved token
   try {
     const saved = await restoreToken();
-    if (saved) {
+    if (saved && saved.length > 0) {
       // Validate token is still active on server
       const client = new FilesApiClient(saved);
-      try {
-        await client.home();
-        return saved;
-      } catch {
-        // Token invalid (server restarted / expired) — clear and continue
-        try { await clearToken(); } catch { /* ignore */ }
-      }
+      await client.home();
+      return saved;
     }
   } catch {
-    // CloudStorage not available
+    // Token invalid or CloudStorage unavailable — clear and continue
+    try { await clearToken(); } catch { /* ignore */ }
   }
 
   throw new Error("No saved token. Send /files in Telegram to get started.");
@@ -113,8 +120,5 @@ function showStatus(container: HTMLElement, message: string, isError = false) {
   div.textContent = message;
   container.appendChild(div);
 }
-
-// Import type for webapp
-import type { TelegramWebApp } from "./services/telegram.js";
 
 main();
