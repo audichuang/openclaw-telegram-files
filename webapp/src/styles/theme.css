@@ -152,6 +152,9 @@ body {
   font-size: 12px;
   color: var(--tg-theme-hint-color);
   margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .file-badge {

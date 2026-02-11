@@ -2,7 +2,7 @@ import type { FilesApiClient, FileItem, SearchResult } from "../services/files-a
 
 /** Format bytes to human-readable size. */
 function formatSize(bytes: number): string {
-  if (bytes === 0) return "0 B";
+  if (bytes <= 0) return "0 B";
   const units = ["B", "KB", "MB", "GB"];
   const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
   const val = bytes / Math.pow(1024, i);
@@ -78,6 +78,7 @@ export function renderFileList(params: {
   container.appendChild(searchResults);
 
   let searchTimeout: ReturnType<typeof setTimeout> | null = null;
+  let searchGeneration = 0;
   searchInput.addEventListener("input", () => {
     if (searchTimeout) clearTimeout(searchTimeout);
     const query = searchInput.value.trim();
@@ -88,15 +89,26 @@ export function renderFileList(params: {
       return;
     }
     searchTimeout = setTimeout(async () => {
-      searchResults.innerHTML = `<div class="status-message">Searching...</div>`;
+      const thisGeneration = ++searchGeneration;
+      searchResults.innerHTML = "";
+      const loadingMsg = document.createElement("div");
+      loadingMsg.className = "status-message";
+      loadingMsg.textContent = "Searching...";
+      searchResults.appendChild(loadingMsg);
       searchResults.style.display = "";
       fileListEl.style.display = "none";
       actionsBar.style.display = "none";
       try {
         const resp = await client.search(currentPath, query);
+        if (thisGeneration !== searchGeneration) return; // stale, discard
         renderSearchResults(searchResults, resp.results, onNavigate, onFileOpen);
       } catch (err) {
-        searchResults.innerHTML = `<div class="status-message error-text">Search failed: ${(err as Error).message}</div>`;
+        if (thisGeneration !== searchGeneration) return;
+        searchResults.innerHTML = "";
+        const errMsg = document.createElement("div");
+        errMsg.className = "status-message error-text";
+        errMsg.textContent = `Search failed: ${(err as Error).message}`;
+        searchResults.appendChild(errMsg);
       }
     }, 300);
   });
@@ -208,7 +220,12 @@ export function renderFileList(params: {
   newFileBtn.addEventListener("click", () => {
     const name = prompt("Enter file name:");
     if (!name || !name.trim()) return;
-    const filePath = currentPath === "/" ? `/${name.trim()}` : `${currentPath}/${name.trim()}`;
+    const trimmed = name.trim();
+    if (trimmed.includes("/") || trimmed.includes("\0")) {
+      alert("File name cannot contain '/' or null characters.");
+      return;
+    }
+    const filePath = currentPath === "/" ? `/${trimmed}` : `${currentPath}/${trimmed}`;
     onFileOpen(filePath);
   });
 
@@ -218,7 +235,12 @@ export function renderFileList(params: {
   newFolderBtn.addEventListener("click", async () => {
     const name = prompt("Enter folder name:");
     if (!name || !name.trim()) return;
-    const dirPath = currentPath === "/" ? `/${name.trim()}` : `${currentPath}/${name.trim()}`;
+    const trimmed = name.trim();
+    if (trimmed.includes("/") || trimmed.includes("\0")) {
+      alert("Folder name cannot contain '/' or null characters.");
+      return;
+    }
+    const dirPath = currentPath === "/" ? `/${trimmed}` : `${currentPath}/${trimmed}`;
     try {
       await client.mkdir(dirPath);
       onRefresh();
@@ -241,7 +263,10 @@ function renderSearchResults(
 ): void {
   container.innerHTML = "";
   if (results.length === 0) {
-    container.innerHTML = `<div class="status-message">No results found</div>`;
+    const noResults = document.createElement("div");
+    noResults.className = "status-message";
+    noResults.textContent = "No results found";
+    container.appendChild(noResults);
     return;
   }
 
@@ -290,7 +315,11 @@ export async function loadAndRenderFileList(params: {
   onFileOpen: (path: string) => void;
 }): Promise<void> {
   const { container, client, dirPath, onNavigate, onFileOpen } = params;
-  container.innerHTML = `<div class="status-message">Loading...</div>`;
+  container.innerHTML = "";
+  const loadingMsg = document.createElement("div");
+  loadingMsg.className = "status-message";
+  loadingMsg.textContent = "Loading...";
+  container.appendChild(loadingMsg);
 
   try {
     const result = await client.ls(dirPath);
@@ -304,7 +333,11 @@ export async function loadAndRenderFileList(params: {
       onRefresh: () => loadAndRenderFileList(params),
     });
   } catch (err) {
-    container.innerHTML = `<div class="status-message error-text">Failed: ${(err as Error).message}</div>`;
+    container.innerHTML = "";
+    const errMsg = document.createElement("div");
+    errMsg.className = "status-message error-text";
+    errMsg.textContent = `Failed: ${(err as Error).message}`;
+    container.appendChild(errMsg);
   }
 }
 

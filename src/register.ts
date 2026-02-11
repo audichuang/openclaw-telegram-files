@@ -81,11 +81,15 @@ function jsonResponse(res: ServerResponse, status: number, data: unknown) {
   res.end(JSON.stringify(data));
 }
 
-/** Prevent path traversal: resolve and verify the path is absolute. */
+/** Prevent path traversal: resolve and verify the path is absolute. Resolves symlinks when path exists. */
 function safePath(rawPath: string): string | null {
   if (!rawPath || rawPath.includes("\0")) return null;
   const resolved = path.resolve(rawPath);
-  return resolved;
+  try {
+    return fs.realpathSync(resolved);
+  } catch {
+    return resolved; // path may not exist yet (e.g. write/mkdir)
+  }
 }
 
 /** Check if a resolved path is within allowed paths. */
@@ -94,9 +98,35 @@ function isPathAllowed(resolvedPath: string, allowedPaths: string[]): boolean {
     ? allowedPaths
     : [os.homedir()];
   return paths.some((base) => {
-    const resolved = path.resolve(base);
-    return resolvedPath === resolved || resolvedPath.startsWith(resolved + path.sep);
+    let resolvedBase: string;
+    try {
+      resolvedBase = fs.realpathSync(path.resolve(base));
+    } catch {
+      resolvedBase = path.resolve(base);
+    }
+    return resolvedPath === resolvedBase || resolvedPath.startsWith(resolvedBase + path.sep);
   });
+}
+
+/** Check if a path is an allowed root itself (prevent deleting root allowed dirs). */
+function isAllowedRoot(resolvedPath: string, allowedPaths: string[]): boolean {
+  const paths = allowedPaths.length > 0
+    ? allowedPaths
+    : [os.homedir()];
+  return paths.some((base) => {
+    let resolvedBase: string;
+    try {
+      resolvedBase = fs.realpathSync(path.resolve(base));
+    } catch {
+      resolvedBase = path.resolve(base);
+    }
+    return resolvedPath === resolvedBase;
+  });
+}
+
+/** Sanitize error message to avoid leaking internal paths. */
+function sanitizeError(err: Error): string {
+  return err.message.replace(/\/[^\s,)]+/g, "[path]");
 }
 
 /** Truncate token for logging (first 8 chars). */
@@ -283,7 +313,7 @@ export function registerAll(api: OpenClawPluginApi) {
 
           jsonResponse(res, 200, { path: dirPath, items });
         } catch (err) {
-          jsonResponse(res, 500, { error: `Failed to list: ${(err as Error).message}` });
+          jsonResponse(res, 500, { error: `Failed to list: ${sanitizeError(err as Error)}` });
         }
         return true;
       }
@@ -311,9 +341,14 @@ export function registerAll(api: OpenClawPluginApi) {
           // Binary detection: check first 512 bytes for null bytes
           const probe = Buffer.alloc(512);
           const fd = fs.openSync(filePath, "r");
-          const bytesRead = fs.readSync(fd, probe, 0, 512, 0);
-          fs.closeSync(fd);
-          if (probe.subarray(0, bytesRead).includes(0)) {
+          let isBinary = false;
+          try {
+            const bytesRead = fs.readSync(fd, probe, 0, 512, 0);
+            isBinary = probe.subarray(0, bytesRead).includes(0);
+          } finally {
+            fs.closeSync(fd);
+          }
+          if (isBinary) {
             jsonResponse(res, 400, { error: "binary file — cannot edit" });
             return true;
           }
@@ -321,7 +356,7 @@ export function registerAll(api: OpenClawPluginApi) {
           const content = fs.readFileSync(filePath, "utf-8");
           jsonResponse(res, 200, { path: filePath, content, size: stat.size });
         } catch (err) {
-          jsonResponse(res, 500, { error: `Failed to read: ${(err as Error).message}` });
+          jsonResponse(res, 500, { error: `Failed to read: ${sanitizeError(err as Error)}` });
         }
         return true;
       }
@@ -352,7 +387,7 @@ export function registerAll(api: OpenClawPluginApi) {
           console.log(`[telegram-files] WRITE ${filePath} by token ${tokenTag(req)}`);
           jsonResponse(res, 200, { ok: true, path: filePath });
         } catch (err) {
-          jsonResponse(res, 500, { error: `Failed to write: ${(err as Error).message}` });
+          jsonResponse(res, 500, { error: `Failed to write: ${sanitizeError(err as Error)}` });
         }
         return true;
       }
@@ -377,7 +412,7 @@ export function registerAll(api: OpenClawPluginApi) {
           console.log(`[telegram-files] MKDIR ${dirPath} by token ${tokenTag(req)}`);
           jsonResponse(res, 200, { ok: true, path: dirPath });
         } catch (err) {
-          jsonResponse(res, 500, { error: `Failed to mkdir: ${(err as Error).message}` });
+          jsonResponse(res, 500, { error: `Failed to mkdir: ${sanitizeError(err as Error)}` });
         }
         return true;
       }
@@ -395,12 +430,18 @@ export function registerAll(api: OpenClawPluginApi) {
           return true;
         }
 
+        // Prevent deleting allowed root directories (e.g. home dir)
+        if (isAllowedRoot(targetPath, allowedPaths)) {
+          jsonResponse(res, 403, { error: "cannot delete a root allowed path" });
+          return true;
+        }
+
         try {
           fs.rmSync(targetPath, { recursive: true });
           console.log(`[telegram-files] DELETE ${targetPath} by token ${tokenTag(req)}`);
           jsonResponse(res, 200, { ok: true });
         } catch (err) {
-          jsonResponse(res, 500, { error: `Failed to delete: ${(err as Error).message}` });
+          jsonResponse(res, 500, { error: `Failed to delete: ${sanitizeError(err as Error)}` });
         }
         return true;
       }
@@ -415,8 +456,8 @@ export function registerAll(api: OpenClawPluginApi) {
           return true;
         }
 
-        if (!query || query.length < 1) {
-          jsonResponse(res, 400, { error: "query parameter 'q' required" });
+        if (!query || query.length < 1 || query.length > 256) {
+          jsonResponse(res, 400, { error: "query parameter 'q' required (1-256 chars)" });
           return true;
         }
 
@@ -424,7 +465,7 @@ export function registerAll(api: OpenClawPluginApi) {
           const results = searchFiles(basePath, query);
           jsonResponse(res, 200, { path: basePath, query, results });
         } catch (err) {
-          jsonResponse(res, 500, { error: `Failed to search: ${(err as Error).message}` });
+          jsonResponse(res, 500, { error: `Failed to search: ${sanitizeError(err as Error)}` });
         }
         return true;
       }

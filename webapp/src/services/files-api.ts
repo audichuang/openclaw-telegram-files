@@ -42,18 +42,25 @@ export class FilesApiClient {
   }
 
   private async request(method: string, endpoint: string, body?: unknown): Promise<unknown> {
-    const opts: RequestInit = {
-      method,
-      headers: {
-        "Authorization": `Bearer ${this.token}`,
-        "Content-Type": "application/json",
-      },
+    const headers: Record<string, string> = {
+      "Authorization": `Bearer ${this.token}`,
     };
+    const opts: RequestInit = { method, headers };
     if (body !== undefined) {
+      headers["Content-Type"] = "application/json";
       opts.body = JSON.stringify(body);
     }
     const resp = await fetch(`${this.baseUrl}${endpoint}`, opts);
-    const data = await resp.json();
+
+    let data: unknown;
+    const contentType = resp.headers.get("content-type") ?? "";
+    if (contentType.includes("application/json")) {
+      data = await resp.json();
+    } else {
+      const text = await resp.text();
+      data = { error: text || `HTTP ${resp.status}` };
+    }
+
     if (!resp.ok) {
       throw new Error((data as { error?: string }).error ?? `HTTP ${resp.status}`);
     }

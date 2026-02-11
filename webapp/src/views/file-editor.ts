@@ -126,11 +126,22 @@ export function renderFileEditor(params: {
 
         const notice = document.createElement("div");
         notice.className = "binary-notice";
-        notice.innerHTML = `
-          <div class="binary-icon">🔒</div>
-          <div class="binary-title">Binary File</div>
-          <div class="binary-desc">This file cannot be edited as text.</div>
-        `;
+
+        const iconEl = document.createElement("div");
+        iconEl.className = "binary-icon";
+        iconEl.textContent = "🔒";
+
+        const titleEl = document.createElement("div");
+        titleEl.className = "binary-title";
+        titleEl.textContent = "Binary File";
+
+        const descEl = document.createElement("div");
+        descEl.className = "binary-desc";
+        descEl.textContent = "This file cannot be edited as text.";
+
+        notice.appendChild(iconEl);
+        notice.appendChild(titleEl);
+        notice.appendChild(descEl);
         editorContainer.appendChild(notice);
         return;
       }
