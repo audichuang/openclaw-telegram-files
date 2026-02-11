@@ -274,8 +274,37 @@ export function renderFileList(params: {
     }
   });
 
+  const uploadBtn = document.createElement("button");
+  uploadBtn.className = "action-btn";
+  uploadBtn.textContent = "↑ Upload";
+  const fileInput = document.createElement("input");
+  fileInput.type = "file";
+  fileInput.multiple = true;
+  fileInput.style.display = "none";
+  uploadBtn.addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", async () => {
+    const files = fileInput.files;
+    if (!files || files.length === 0) return;
+    uploadBtn.disabled = true;
+    uploadBtn.textContent = "Uploading...";
+    let failed = 0;
+    for (const file of Array.from(files)) {
+      try {
+        await client.upload(currentPath, file);
+      } catch (err) {
+        failed++;
+        alert(`Upload failed (${file.name}): ${(err as Error).message}`);
+      }
+    }
+    uploadBtn.disabled = false;
+    uploadBtn.textContent = "↑ Upload";
+    fileInput.value = "";
+    onRefresh();
+  });
+
   actionsBar.appendChild(newFileBtn);
   actionsBar.appendChild(newFolderBtn);
+  actionsBar.appendChild(uploadBtn);
   container.appendChild(actionsBar);
 }
 

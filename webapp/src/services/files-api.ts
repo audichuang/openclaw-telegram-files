@@ -94,6 +94,31 @@ export class FilesApiClient {
     return (await this.request("GET", "/home")) as { path: string };
   }
 
+  async upload(dirPath: string, file: File): Promise<void> {
+    const encodedDir = encodeURIComponent(dirPath);
+    const encodedName = encodeURIComponent(file.name);
+    const resp = await fetch(`${this.baseUrl}/upload?dir=${encodedDir}&name=${encodedName}`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${this.token}`,
+      },
+      body: file,
+    });
+
+    let data: unknown;
+    const contentType = resp.headers.get("content-type") ?? "";
+    if (contentType.includes("application/json")) {
+      data = await resp.json();
+    } else {
+      const text = await resp.text();
+      data = { error: text || `HTTP ${resp.status}` };
+    }
+
+    if (!resp.ok) {
+      throw new Error((data as { error?: string }).error ?? `HTTP ${resp.status}`);
+    }
+  }
+
   async search(basePath: string, query: string): Promise<SearchResponse> {
     const encodedPath = encodeURIComponent(basePath);
     const encodedQuery = encodeURIComponent(query);

@@ -399,6 +399,61 @@ export function registerAll(api: OpenClawPluginApi) {
         return true;
       }
 
+      // POST /api/upload — raw binary upload with path in query string
+      if (req.method === "POST" && subPath === "/api/upload") {
+        const targetDir = safePath(url.searchParams.get("dir") || "");
+        const fileName = url.searchParams.get("name") || "";
+
+        if (!targetDir || !fileName || fileName.includes("/") || fileName.includes("\0")) {
+          jsonResponse(res, 400, { error: "dir and name required" });
+          return true;
+        }
+
+        const filePath = path.join(targetDir, fileName);
+        if (!isPathAllowed(filePath, allowedPaths)) {
+          jsonResponse(res, 403, { error: "path not allowed" });
+          return true;
+        }
+
+        // Read raw body (max 50MB)
+        const maxUpload = 50 * 1024 * 1024;
+        const chunks: Buffer[] = [];
+        let size = 0;
+        let overflow = false;
+
+        await new Promise<void>((resolve) => {
+          req.on("data", (chunk: Buffer) => {
+            size += chunk.length;
+            if (size > maxUpload) {
+              overflow = true;
+              req.destroy();
+              return;
+            }
+            chunks.push(chunk);
+          });
+          req.on("end", () => resolve());
+          req.on("error", () => resolve());
+        });
+
+        if (overflow) {
+          jsonResponse(res, 413, { error: "file too large (max 50MB)" });
+          return true;
+        }
+
+        try {
+          const dir = path.dirname(filePath);
+          if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+          }
+          fs.writeFileSync(filePath, Buffer.concat(chunks));
+          console.log(`[telegram-files] UPLOAD ${filePath} (${size} bytes) by token ${tokenTag(req)}`);
+          jsonResponse(res, 200, { ok: true, path: filePath, size });
+        } catch (err) {
+          jsonResponse(res, 500, { error: `Failed to upload: ${sanitizeError(err as Error)}` });
+        }
+        return true;
+      }
+
       // POST /api/mkdir { path }
       if (req.method === "POST" && subPath === "/api/mkdir") {
         const body = await readJsonBody(req);
