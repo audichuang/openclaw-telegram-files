@@ -24,12 +24,34 @@ async function main() {
     app.innerHTML = "";
     mountApp(app, client);
   } catch (err) {
-    showStatus(app, `Connection failed: ${(err as Error).message}`, true);
+    const msg = (err as Error).message;
+    if (msg.includes("No saved token") || msg.includes("unauthorized") || msg.includes("expired")) {
+      showExpiredUI(app, webapp);
+    } else {
+      showStatus(app, `Connection failed: ${msg}`, true);
+    }
   }
 }
 
 async function authenticate(): Promise<string> {
-  // 1. Try saved token (may fail if CloudStorage is unavailable)
+  // 1. Check URL for pairing code FIRST (fresh code takes priority)
+  const url = new URL(window.location.href);
+  const pairCode = url.searchParams.get("pair");
+
+  if (pairCode) {
+    try {
+      const token = await exchangePairCode(pairCode);
+
+      // Save (best-effort)
+      try { await saveToken(token); } catch { /* CloudStorage unavailable */ }
+
+      return token;
+    } catch {
+      // Pairing code already used or expired — fall through to saved token
+    }
+  }
+
+  // 2. Try saved token
   try {
     const saved = await restoreToken();
     if (saved) {
@@ -39,47 +61,60 @@ async function authenticate(): Promise<string> {
         await client.home();
         return saved;
       } catch {
-        // Token invalid (server restarted?) — clear and continue
+        // Token invalid (server restarted / expired) — clear and continue
         try { await clearToken(); } catch { /* ignore */ }
       }
     }
   } catch {
-    // CloudStorage not available — continue to pairing
+    // CloudStorage not available
   }
 
-  // 2. Check URL for pairing code
-  const url = new URL(window.location.href);
-  const pairCode = url.searchParams.get("pair");
+  throw new Error("No saved token. Send /files in Telegram to get started.");
+}
 
-  if (!pairCode) {
-    throw new Error("No saved token. Send /files in Telegram to get started.");
-  }
+/** Show a friendly UI when the session has expired. */
+function showExpiredUI(container: HTMLElement, webapp: TelegramWebApp) {
+  container.innerHTML = "";
 
-  // 3. Exchange
-  const token = await exchangePairCode(pairCode);
+  const wrapper = document.createElement("div");
+  wrapper.className = "status-message";
 
-  // 4. Save (best-effort, don't fail if CloudStorage unavailable)
-  try {
-    await saveToken(token);
-  } catch {
-    // CloudStorage not available — token won't persist across sessions
-  }
+  const icon = document.createElement("div");
+  icon.style.fontSize = "48px";
+  icon.style.marginBottom = "12px";
+  icon.textContent = "🔑";
 
-  // 5. Clean URL
-  url.searchParams.delete("pair");
-  window.history.replaceState({}, "", url.toString());
+  const title = document.createElement("div");
+  title.style.fontWeight = "600";
+  title.style.fontSize = "16px";
+  title.style.marginBottom = "8px";
+  title.textContent = "Session Expired";
 
-  return token;
+  const desc = document.createElement("div");
+  desc.style.marginBottom = "16px";
+  desc.textContent = "Send /files in Telegram to get a new link.";
+
+  const closeBtn = document.createElement("button");
+  closeBtn.style.cssText = "padding:10px 24px;border-radius:8px;border:none;background:var(--tg-theme-button-color);color:var(--tg-theme-button-text-color);font-size:14px;font-weight:600;cursor:pointer;";
+  closeBtn.textContent = "Close";
+  closeBtn.addEventListener("click", () => webapp.close());
+
+  wrapper.appendChild(icon);
+  wrapper.appendChild(title);
+  wrapper.appendChild(desc);
+  wrapper.appendChild(closeBtn);
+  container.appendChild(wrapper);
 }
 
 function showStatus(container: HTMLElement, message: string, isError = false) {
-  container.innerHTML = `<div class="status-message ${isError ? "error-text" : ""}">${escapeHtml(message)}</div>`;
+  container.innerHTML = "";
+  const div = document.createElement("div");
+  div.className = `status-message ${isError ? "error-text" : ""}`;
+  div.textContent = message;
+  container.appendChild(div);
 }
 
-function escapeHtml(text: string): string {
-  const div = document.createElement("div");
-  div.textContent = text;
-  return div.innerHTML;
-}
+// Import type for webapp
+import type { TelegramWebApp } from "./services/telegram.js";
 
 main();
