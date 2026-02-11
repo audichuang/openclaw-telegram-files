@@ -5,6 +5,8 @@ export type FileItem = {
   isDir: boolean;
   isFile: boolean;
   isSymlink: boolean;
+  size: number;
+  mtime: number;
 };
 
 export type LsResult = {
@@ -16,6 +18,18 @@ export type ReadResult = {
   path: string;
   content: string;
   size: number;
+};
+
+export type SearchResult = {
+  path: string;
+  name: string;
+  isDir: boolean;
+};
+
+export type SearchResponse = {
+  path: string;
+  query: string;
+  results: SearchResult[];
 };
 
 export class FilesApiClient {
@@ -63,5 +77,15 @@ export class FilesApiClient {
   async delete(targetPath: string): Promise<void> {
     const encoded = encodeURIComponent(targetPath);
     await this.request("DELETE", `/delete?path=${encoded}`);
+  }
+
+  async mkdir(dirPath: string): Promise<void> {
+    await this.request("POST", "/mkdir", { path: dirPath });
+  }
+
+  async search(basePath: string, query: string): Promise<SearchResponse> {
+    const encodedPath = encodeURIComponent(basePath);
+    const encodedQuery = encodeURIComponent(query);
+    return (await this.request("GET", `/search?path=${encodedPath}&q=${encodedQuery}`)) as SearchResponse;
   }
 }

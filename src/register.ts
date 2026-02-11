@@ -1,4 +1,5 @@
 import path from "node:path";
+import os from "node:os";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -12,10 +13,20 @@ const DIST_WEBAPP = path.resolve(__dirname, "..", "dist", "webapp");
 
 type TelegramFilesPluginConfig = {
   externalUrl?: string;
+  allowedPaths?: string[];
 };
 
-// Active session tokens (exchanged from pairing codes)
-const activeTokens = new Set<string>();
+// --- Token TTL (24h) ---
+const activeTokens = new Map<string, number>(); // token → expiresAt
+const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+
+// Periodic cleanup every hour
+setInterval(() => {
+  const now = Date.now();
+  for (const [token, exp] of activeTokens) {
+    if (now > exp) activeTokens.delete(token);
+  }
+}, 60 * 60 * 1000);
 
 /** Read a JSON body from an IncomingMessage. */
 function readJsonBody(req: IncomingMessage, maxBytes = 5 * 1024 * 1024): Promise<Record<string, unknown> | null> {
@@ -43,11 +54,24 @@ function readJsonBody(req: IncomingMessage, maxBytes = 5 * 1024 * 1024): Promise
   });
 }
 
-/** Check bearer token from Authorization header. */
-function checkAuth(req: IncomingMessage): boolean {
+/** Extract bearer token from Authorization header. */
+function extractBearerToken(req: IncomingMessage): string | null {
   const auth = req.headers.authorization;
-  if (!auth?.startsWith("Bearer ")) return false;
-  return activeTokens.has(auth.slice(7));
+  if (!auth?.startsWith("Bearer ")) return null;
+  return auth.slice(7);
+}
+
+/** Check bearer token with TTL expiration. */
+function checkAuth(req: IncomingMessage): boolean {
+  const token = extractBearerToken(req);
+  if (!token) return false;
+  const expiresAt = activeTokens.get(token);
+  if (!expiresAt) return false;
+  if (Date.now() > expiresAt) {
+    activeTokens.delete(token);
+    return false;
+  }
+  return true;
 }
 
 function jsonResponse(res: ServerResponse, status: number, data: unknown) {
@@ -64,8 +88,61 @@ function safePath(rawPath: string): string | null {
   return resolved;
 }
 
+/** Check if a resolved path is within allowed paths. */
+function isPathAllowed(resolvedPath: string, allowedPaths: string[]): boolean {
+  const paths = allowedPaths.length > 0
+    ? allowedPaths
+    : [os.homedir()];
+  return paths.some((base) => {
+    const resolved = path.resolve(base);
+    return resolvedPath === resolved || resolvedPath.startsWith(resolved + path.sep);
+  });
+}
+
+/** Truncate token for logging (first 8 chars). */
+function tokenTag(req: IncomingMessage): string {
+  const t = extractBearerToken(req);
+  return t ? t.slice(0, 8) + "..." : "unknown";
+}
+
+/** Recursive file name search. */
+function searchFiles(
+  basePath: string,
+  query: string,
+  maxResults = 50,
+  maxDepth = 5,
+): { path: string; name: string; isDir: boolean }[] {
+  const results: { path: string; name: string; isDir: boolean }[] = [];
+  const lowerQuery = query.toLowerCase();
+
+  function walk(dir: string, depth: number) {
+    if (depth > maxDepth || results.length >= maxResults) return;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return; // permission denied etc
+    }
+    for (const e of entries) {
+      if (results.length >= maxResults) return;
+      if (e.name.startsWith(".")) continue; // skip hidden
+      const full = path.join(dir, e.name);
+      if (e.name.toLowerCase().includes(lowerQuery)) {
+        results.push({ path: full, name: e.name, isDir: e.isDirectory() });
+      }
+      if (e.isDirectory()) {
+        walk(full, depth + 1);
+      }
+    }
+  }
+
+  walk(basePath, 0);
+  return results;
+}
+
 export function registerAll(api: OpenClawPluginApi) {
   const pluginConfig = api.pluginConfig as TelegramFilesPluginConfig | undefined;
+  const allowedPaths = pluginConfig?.allowedPaths ?? [];
 
   // 1. Register /files command
   api.registerCommand({
@@ -149,9 +226,9 @@ export function registerAll(api: OpenClawPluginApi) {
         return true;
       }
 
-      // Create a session token for subsequent API calls
+      // Create a session token with TTL
       const sessionToken = crypto.randomUUID();
-      activeTokens.add(sessionToken);
+      activeTokens.set(sessionToken, Date.now() + TOKEN_TTL_MS);
       jsonResponse(res, 200, { token: sessionToken });
       return true;
     }
@@ -166,8 +243,8 @@ export function registerAll(api: OpenClawPluginApi) {
       // GET /api/ls?path=/some/dir
       if (req.method === "GET" && subPath === "/api/ls") {
         const dirPath = safePath(url.searchParams.get("path") || "/");
-        if (!dirPath) {
-          jsonResponse(res, 400, { error: "invalid path" });
+        if (!dirPath || !isPathAllowed(dirPath, allowedPaths)) {
+          jsonResponse(res, 403, { error: "path not allowed" });
           return true;
         }
 
@@ -179,12 +256,24 @@ export function registerAll(api: OpenClawPluginApi) {
           }
 
           const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-          const items = entries.map((e) => ({
-            name: e.name,
-            isDir: e.isDirectory(),
-            isFile: e.isFile(),
-            isSymlink: e.isSymbolicLink(),
-          }));
+          const items = entries.map((e) => {
+            const fullPath = path.join(dirPath, e.name);
+            let size = 0;
+            let mtime = 0;
+            try {
+              const s = fs.statSync(fullPath);
+              size = s.size;
+              mtime = s.mtimeMs;
+            } catch { /* permission denied etc */ }
+            return {
+              name: e.name,
+              isDir: e.isDirectory(),
+              isFile: e.isFile(),
+              isSymlink: e.isSymbolicLink(),
+              size,
+              mtime,
+            };
+          });
 
           // Sort: dirs first, then files, alphabetical
           items.sort((a, b) => {
@@ -202,8 +291,8 @@ export function registerAll(api: OpenClawPluginApi) {
       // GET /api/read?path=/some/file
       if (req.method === "GET" && subPath === "/api/read") {
         const filePath = safePath(url.searchParams.get("path") || "");
-        if (!filePath) {
-          jsonResponse(res, 400, { error: "invalid path" });
+        if (!filePath || !isPathAllowed(filePath, allowedPaths)) {
+          jsonResponse(res, 403, { error: "path not allowed" });
           return true;
         }
 
@@ -218,6 +307,17 @@ export function registerAll(api: OpenClawPluginApi) {
             jsonResponse(res, 400, { error: "file too large (max 2MB)" });
             return true;
           }
+
+          // Binary detection: check first 512 bytes for null bytes
+          const probe = Buffer.alloc(512);
+          const fd = fs.openSync(filePath, "r");
+          const bytesRead = fs.readSync(fd, probe, 0, 512, 0);
+          fs.closeSync(fd);
+          if (probe.subarray(0, bytesRead).includes(0)) {
+            jsonResponse(res, 400, { error: "binary file — cannot edit" });
+            return true;
+          }
+
           const content = fs.readFileSync(filePath, "utf-8");
           jsonResponse(res, 200, { path: filePath, content, size: stat.size });
         } catch (err) {
@@ -237,6 +337,11 @@ export function registerAll(api: OpenClawPluginApi) {
           return true;
         }
 
+        if (!isPathAllowed(filePath, allowedPaths)) {
+          jsonResponse(res, 403, { error: "path not allowed" });
+          return true;
+        }
+
         try {
           // Create parent dirs if needed
           const dir = path.dirname(filePath);
@@ -244,9 +349,35 @@ export function registerAll(api: OpenClawPluginApi) {
             fs.mkdirSync(dir, { recursive: true });
           }
           fs.writeFileSync(filePath, content, "utf-8");
+          console.log(`[telegram-files] WRITE ${filePath} by token ${tokenTag(req)}`);
           jsonResponse(res, 200, { ok: true, path: filePath });
         } catch (err) {
           jsonResponse(res, 500, { error: `Failed to write: ${(err as Error).message}` });
+        }
+        return true;
+      }
+
+      // POST /api/mkdir { path }
+      if (req.method === "POST" && subPath === "/api/mkdir") {
+        const body = await readJsonBody(req);
+        const dirPath = safePath(typeof body?.path === "string" ? body.path : "");
+
+        if (!dirPath) {
+          jsonResponse(res, 400, { error: "path required" });
+          return true;
+        }
+
+        if (!isPathAllowed(dirPath, allowedPaths)) {
+          jsonResponse(res, 403, { error: "path not allowed" });
+          return true;
+        }
+
+        try {
+          fs.mkdirSync(dirPath, { recursive: true });
+          console.log(`[telegram-files] MKDIR ${dirPath} by token ${tokenTag(req)}`);
+          jsonResponse(res, 200, { ok: true, path: dirPath });
+        } catch (err) {
+          jsonResponse(res, 500, { error: `Failed to mkdir: ${(err as Error).message}` });
         }
         return true;
       }
@@ -259,11 +390,41 @@ export function registerAll(api: OpenClawPluginApi) {
           return true;
         }
 
+        if (!isPathAllowed(targetPath, allowedPaths)) {
+          jsonResponse(res, 403, { error: "path not allowed" });
+          return true;
+        }
+
         try {
           fs.rmSync(targetPath, { recursive: true });
+          console.log(`[telegram-files] DELETE ${targetPath} by token ${tokenTag(req)}`);
           jsonResponse(res, 200, { ok: true });
         } catch (err) {
           jsonResponse(res, 500, { error: `Failed to delete: ${(err as Error).message}` });
+        }
+        return true;
+      }
+
+      // GET /api/search?path=/base&q=keyword
+      if (req.method === "GET" && subPath === "/api/search") {
+        const basePath = safePath(url.searchParams.get("path") || "/");
+        const query = url.searchParams.get("q") || "";
+
+        if (!basePath || !isPathAllowed(basePath, allowedPaths)) {
+          jsonResponse(res, 403, { error: "path not allowed" });
+          return true;
+        }
+
+        if (!query || query.length < 1) {
+          jsonResponse(res, 400, { error: "query parameter 'q' required" });
+          return true;
+        }
+
+        try {
+          const results = searchFiles(basePath, query);
+          jsonResponse(res, 200, { path: basePath, query, results });
+        } catch (err) {
+          jsonResponse(res, 500, { error: `Failed to search: ${(err as Error).message}` });
         }
         return true;
       }

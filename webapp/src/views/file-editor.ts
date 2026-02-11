@@ -49,12 +49,15 @@ export function renderFileEditor(params: {
 
   let originalContent = "";
   let dirty = false;
+  let isBinary = false;
+  let isNewFile = false;
 
   textarea.addEventListener("input", () => {
+    if (isBinary) return;
     const isDirty = textarea.value !== originalContent;
     if (isDirty !== dirty) {
       dirty = isDirty;
-      statusEl.textContent = dirty ? "Modified" : "Saved";
+      statusEl.textContent = dirty ? "Modified" : (isNewFile ? "New file" : "Saved");
       if (dirty) {
         webapp.MainButton.setText("Save");
         webapp.MainButton.show();
@@ -75,6 +78,7 @@ export function renderFileEditor(params: {
 
   // Save
   const handleSave = async () => {
+    if (isBinary) return;
     webapp.MainButton.showProgress(true);
     webapp.MainButton.disable();
     statusEl.textContent = "Saving...";
@@ -83,6 +87,7 @@ export function renderFileEditor(params: {
       await client.write(filePath, textarea.value);
       originalContent = textarea.value;
       dirty = false;
+      isNewFile = false;
       statusEl.textContent = "Saved";
       webapp.MainButton.hide();
     } catch (err) {
@@ -111,7 +116,41 @@ export function renderFileEditor(params: {
       textarea.disabled = false;
       statusEl.textContent = "Ready";
     } catch (err) {
-      statusEl.textContent = `Error: ${(err as Error).message}`;
+      const msg = (err as Error).message;
+
+      // Binary file detection
+      if (msg.includes("binary file")) {
+        isBinary = true;
+        textarea.style.display = "none";
+        statusEl.textContent = "";
+
+        const notice = document.createElement("div");
+        notice.className = "binary-notice";
+        notice.innerHTML = `
+          <div class="binary-icon">🔒</div>
+          <div class="binary-title">Binary File</div>
+          <div class="binary-desc">This file cannot be edited as text.</div>
+        `;
+        editorContainer.appendChild(notice);
+        return;
+      }
+
+      // New file (doesn't exist yet) — allow editing empty content
+      if (msg.includes("ENOENT") || msg.includes("no such file")) {
+        isNewFile = true;
+        originalContent = "";
+        textarea.value = "";
+        textarea.disabled = false;
+        textarea.placeholder = "Start typing...";
+        statusEl.textContent = "New file";
+        // Show save button immediately for new files
+        webapp.MainButton.setText("Save");
+        webapp.MainButton.show();
+        dirty = true;
+        return;
+      }
+
+      statusEl.textContent = `Error: ${msg}`;
       textarea.placeholder = "Failed to load file.";
     }
   }

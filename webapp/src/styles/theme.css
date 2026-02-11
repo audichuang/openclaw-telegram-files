@@ -33,6 +33,19 @@ body {
   padding: var(--gap);
 }
 
+/* Toolbar (path + toggle) */
+.list-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.list-toolbar .path-header {
+  flex: 1;
+  padding: 0;
+}
+
 /* Path header */
 .path-header {
   font-size: 13px;
@@ -42,6 +55,55 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Toggle hidden files button */
+.toggle-hidden-btn {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--tg-theme-hint-color);
+  background: transparent;
+  color: var(--tg-theme-hint-color);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.toggle-hidden-btn:active {
+  opacity: 0.7;
+}
+
+/* Search bar */
+.search-bar {
+  padding: 4px 0 8px;
+}
+
+.search-input {
+  width: 100%;
+  padding: 10px var(--gap);
+  font-size: 14px;
+  border: 1px solid var(--tg-theme-hint-color);
+  border-radius: var(--radius);
+  background: var(--tg-theme-secondary-bg-color);
+  color: var(--tg-theme-text-color);
+  outline: none;
+  -webkit-appearance: none;
+}
+
+.search-input:focus {
+  border-color: var(--tg-theme-button-color);
+}
+
+.search-input::placeholder {
+  color: var(--tg-theme-hint-color);
+}
+
+/* Search results */
+.search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 /* File list */
@@ -110,6 +172,47 @@ body {
   color: #e37400;
 }
 
+/* Delete button on items */
+.item-delete-btn {
+  background: none;
+  border: none;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  opacity: 0.5;
+  transition: opacity 0.15s;
+}
+
+.item-delete-btn:active {
+  opacity: 1;
+}
+
+/* Action buttons bar */
+.actions-bar {
+  display: flex;
+  gap: 8px;
+  padding: 12px 0;
+}
+
+.action-btn {
+  flex: 1;
+  padding: 12px;
+  font-size: 14px;
+  font-weight: 600;
+  border: 2px dashed var(--tg-theme-hint-color);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--tg-theme-hint-color);
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.action-btn:active {
+  opacity: 0.7;
+}
+
 /* Editor */
 .editor-container {
   display: flex;
@@ -155,6 +258,31 @@ body {
 
 .editor-textarea:focus {
   border-color: var(--tg-theme-button-color);
+}
+
+/* Binary file notice */
+.binary-notice {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px var(--gap);
+  text-align: center;
+  gap: 8px;
+}
+
+.binary-icon {
+  font-size: 48px;
+}
+
+.binary-title {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.binary-desc {
+  font-size: 14px;
+  color: var(--tg-theme-hint-color);
 }
 
 /* Agent selector */
