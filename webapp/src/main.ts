@@ -29,9 +29,13 @@ async function main() {
 }
 
 async function authenticate(): Promise<string> {
-  // 1. Try saved token
-  const saved = await restoreToken();
-  if (saved) return saved;
+  // 1. Try saved token (may fail if CloudStorage is unavailable)
+  try {
+    const saved = await restoreToken();
+    if (saved) return saved;
+  } catch {
+    // CloudStorage not available — continue to pairing
+  }
 
   // 2. Check URL for pairing code
   const url = new URL(window.location.href);
@@ -44,8 +48,12 @@ async function authenticate(): Promise<string> {
   // 3. Exchange
   const token = await exchangePairCode(pairCode);
 
-  // 4. Save
-  await saveToken(token);
+  // 4. Save (best-effort, don't fail if CloudStorage unavailable)
+  try {
+    await saveToken(token);
+  } catch {
+    // CloudStorage not available — token won't persist across sessions
+  }
 
   // 5. Clean URL
   url.searchParams.delete("pair");
