@@ -65,10 +65,8 @@ export class GatewayWsClient {
               auth: { token: this.token },
               role: "operator",
               scopes: [
-                "agents.list",
-                "agents.files.list",
-                "agents.files.get",
-                "agents.files.set",
+                "operator.read",
+                "operator.write",
               ],
               caps: [],
             },
