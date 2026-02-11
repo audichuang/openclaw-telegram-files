@@ -33,6 +33,17 @@ body {
   padding: var(--gap);
 }
 
+/* Path header */
+.path-header {
+  font-size: 13px;
+  font-family: var(--font-mono);
+  color: var(--tg-theme-hint-color);
+  padding: 8px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* File list */
 .file-list {
   display: flex;

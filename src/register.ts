@@ -1,4 +1,5 @@
 import path from "node:path";
+import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
@@ -11,18 +12,19 @@ const DIST_WEBAPP = path.resolve(__dirname, "..", "dist", "webapp");
 
 type TelegramFilesPluginConfig = {
   externalUrl?: string;
-  webappUrl?: string;
 };
 
+// Active session tokens (exchanged from pairing codes)
+const activeTokens = new Set<string>();
+
 /** Read a JSON body from an IncomingMessage. */
-function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown> | null> {
+function readJsonBody(req: IncomingMessage, maxBytes = 5 * 1024 * 1024): Promise<Record<string, unknown> | null> {
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
     let size = 0;
-    const MAX = 4096;
     req.on("data", (chunk: Buffer) => {
       size += chunk.length;
-      if (size > MAX) {
+      if (size > maxBytes) {
         resolve(null);
         req.destroy();
         return;
@@ -41,19 +43,40 @@ function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown> | n
   });
 }
 
+/** Check bearer token from Authorization header. */
+function checkAuth(req: IncomingMessage): boolean {
+  const auth = req.headers.authorization;
+  if (!auth?.startsWith("Bearer ")) return false;
+  return activeTokens.has(auth.slice(7));
+}
+
+function jsonResponse(res: ServerResponse, status: number, data: unknown) {
+  res.setHeader("Content-Type", "application/json");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.statusCode = status;
+  res.end(JSON.stringify(data));
+}
+
+/** Prevent path traversal: resolve and verify the path is absolute. */
+function safePath(rawPath: string): string | null {
+  if (!rawPath || rawPath.includes("\0")) return null;
+  const resolved = path.resolve(rawPath);
+  return resolved;
+}
+
 export function registerAll(api: OpenClawPluginApi) {
   const pluginConfig = api.pluginConfig as TelegramFilesPluginConfig | undefined;
 
   // 1. Register /files command
   api.registerCommand({
     name: "files",
-    description: "Open file manager to edit agent files on mobile",
+    description: "Open file manager on mobile",
     handler: async (ctx) => {
       const cfg = ctx.config;
       const externalUrl = pluginConfig?.externalUrl;
 
       if (!externalUrl) {
-        return { text: "Please set externalUrl: openclaw config set plugins.entries.telegram-files.config.externalUrl \"https://your-host\"" };
+        return { text: 'Please set externalUrl: openclaw config set plugins.entries.telegram-files.config.externalUrl "https://your-host"' };
       }
 
       const gatewayToken = cfg.gateway?.auth?.token;
@@ -64,8 +87,6 @@ export function registerAll(api: OpenClawPluginApi) {
       const code = createPairingCode(gatewayToken);
       const miniAppUrl = `${externalUrl}/plugins/telegram-files/?pair=${code}`;
 
-      // For Telegram: send a web_app inline keyboard button directly via Bot API.
-      // PluginCommandContext has senderId but not chatId; in DMs they are equivalent.
       if (ctx.channel === "telegram" && ctx.senderId) {
         const runtime = getFilesRuntime();
         const { token } = runtime.channel.telegram.resolveTelegramToken(cfg);
@@ -78,76 +99,176 @@ export function registerAll(api: OpenClawPluginApi) {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                   chat_id: ctx.senderId,
-                  text: "Tap to manage agent files:",
+                  text: "Tap to open file manager:",
                   reply_markup: {
                     inline_keyboard: [
-                      [
-                        {
-                          text: "Open File Manager",
-                          web_app: { url: miniAppUrl },
-                        },
-                      ],
+                      [{ text: "Open File Manager", web_app: { url: miniAppUrl } }],
                     ],
                   },
                 }),
               },
             );
-            if (resp.ok) {
-              // Already sent via Telegram API; return empty to suppress SDK reply
-              return { text: "" };
-            }
+            if (resp.ok) return { text: "" };
           } catch {
-            // Fall through to text-only fallback
+            // Fall through
           }
         }
       }
 
-      // Fallback for non-Telegram channels or if Telegram send fails
       return { text: `Open file manager: ${miniAppUrl}` };
     },
   });
 
-  // 2. Register HTTP handler for token exchange + static assets
+  // 2. Register HTTP handler
   api.registerHttpHandler(async (req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
     const prefix = "/plugins/telegram-files";
 
-    // Only handle requests under our plugin path
-    if (!url.pathname.startsWith(prefix)) {
-      return false;
-    }
+    if (!url.pathname.startsWith(prefix)) return false;
 
     const subPath = url.pathname.slice(prefix.length) || "/";
 
     // CORS preflight
     if (req.method === "OPTIONS") {
       res.setHeader("Access-Control-Allow-Origin", "*");
-      res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
       res.statusCode = 204;
       res.end();
       return true;
     }
 
-    // Token exchange endpoint
+    // --- Token exchange (no auth required) ---
     if (req.method === "POST" && subPath === "/api/exchange") {
-      res.setHeader("Access-Control-Allow-Origin", "*");
-      res.setHeader("Content-Type", "application/json");
-
       const body = await readJsonBody(req);
       const pairCode = typeof body?.pairCode === "string" ? body.pairCode : "";
-      const token = exchangePairingCode(pairCode);
+      const gwToken = exchangePairingCode(pairCode);
 
-      if (!token) {
-        res.statusCode = 401;
-        res.end(JSON.stringify({ error: "invalid or expired pairing code" }));
+      if (!gwToken) {
+        jsonResponse(res, 401, { error: "invalid or expired pairing code" });
         return true;
       }
 
-      // Return the token and ws URL for the Mini App to connect
-      const wsUrl = pluginConfig?.externalUrl?.replace(/^http/, "ws") ?? "ws://localhost:18789";
-      res.statusCode = 200;
-      res.end(JSON.stringify({ token, wsUrl }));
+      // Create a session token for subsequent API calls
+      const sessionToken = crypto.randomUUID();
+      activeTokens.add(sessionToken);
+      jsonResponse(res, 200, { token: sessionToken });
+      return true;
+    }
+
+    // --- All other API endpoints require auth ---
+    if (subPath.startsWith("/api/")) {
+      if (!checkAuth(req)) {
+        jsonResponse(res, 401, { error: "unauthorized" });
+        return true;
+      }
+
+      // GET /api/ls?path=/some/dir
+      if (req.method === "GET" && subPath === "/api/ls") {
+        const dirPath = safePath(url.searchParams.get("path") || "/");
+        if (!dirPath) {
+          jsonResponse(res, 400, { error: "invalid path" });
+          return true;
+        }
+
+        try {
+          const stat = fs.statSync(dirPath);
+          if (!stat.isDirectory()) {
+            jsonResponse(res, 400, { error: "not a directory" });
+            return true;
+          }
+
+          const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+          const items = entries.map((e) => ({
+            name: e.name,
+            isDir: e.isDirectory(),
+            isFile: e.isFile(),
+            isSymlink: e.isSymbolicLink(),
+          }));
+
+          // Sort: dirs first, then files, alphabetical
+          items.sort((a, b) => {
+            if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+            return a.name.localeCompare(b.name);
+          });
+
+          jsonResponse(res, 200, { path: dirPath, items });
+        } catch (err) {
+          jsonResponse(res, 500, { error: `Failed to list: ${(err as Error).message}` });
+        }
+        return true;
+      }
+
+      // GET /api/read?path=/some/file
+      if (req.method === "GET" && subPath === "/api/read") {
+        const filePath = safePath(url.searchParams.get("path") || "");
+        if (!filePath) {
+          jsonResponse(res, 400, { error: "invalid path" });
+          return true;
+        }
+
+        try {
+          const stat = fs.statSync(filePath);
+          if (!stat.isFile()) {
+            jsonResponse(res, 400, { error: "not a file" });
+            return true;
+          }
+          // Limit to 2MB text files
+          if (stat.size > 2 * 1024 * 1024) {
+            jsonResponse(res, 400, { error: "file too large (max 2MB)" });
+            return true;
+          }
+          const content = fs.readFileSync(filePath, "utf-8");
+          jsonResponse(res, 200, { path: filePath, content, size: stat.size });
+        } catch (err) {
+          jsonResponse(res, 500, { error: `Failed to read: ${(err as Error).message}` });
+        }
+        return true;
+      }
+
+      // POST /api/write { path, content }
+      if (req.method === "POST" && subPath === "/api/write") {
+        const body = await readJsonBody(req);
+        const filePath = safePath(typeof body?.path === "string" ? body.path : "");
+        const content = typeof body?.content === "string" ? body.content : null;
+
+        if (!filePath || content === null) {
+          jsonResponse(res, 400, { error: "path and content required" });
+          return true;
+        }
+
+        try {
+          // Create parent dirs if needed
+          const dir = path.dirname(filePath);
+          if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+          }
+          fs.writeFileSync(filePath, content, "utf-8");
+          jsonResponse(res, 200, { ok: true, path: filePath });
+        } catch (err) {
+          jsonResponse(res, 500, { error: `Failed to write: ${(err as Error).message}` });
+        }
+        return true;
+      }
+
+      // DELETE /api/delete?path=/some/file
+      if (req.method === "DELETE" && subPath === "/api/delete") {
+        const targetPath = safePath(url.searchParams.get("path") || "");
+        if (!targetPath) {
+          jsonResponse(res, 400, { error: "invalid path" });
+          return true;
+        }
+
+        try {
+          fs.rmSync(targetPath, { recursive: true });
+          jsonResponse(res, 200, { ok: true });
+        } catch (err) {
+          jsonResponse(res, 500, { error: `Failed to delete: ${(err as Error).message}` });
+        }
+        return true;
+      }
+
+      jsonResponse(res, 404, { error: "unknown API endpoint" });
       return true;
     }
 

@@ -1,45 +1,35 @@
 import { getTelegramWebApp } from "./services/telegram.js";
 import { restoreToken, saveToken, exchangePairCode } from "./services/auth.js";
-import { GatewayWsClient } from "./services/gateway-ws.js";
+import { FilesApiClient } from "./services/files-api.js";
 import { mountApp } from "./app.js";
 
 async function main() {
   const app = document.getElementById("app")!;
   const webapp = getTelegramWebApp();
 
-  // Signal Telegram that the app is ready
   webapp.ready();
   webapp.expand();
 
   showStatus(app, "Connecting...");
 
   try {
-    const auth = await authenticate();
-    showStatus(app, "Connecting to gateway...");
+    const token = await authenticate();
+    showStatus(app, "Loading...");
 
-    const client = new GatewayWsClient(auth.token, auth.wsUrl);
-    await client.connect();
+    const client = new FilesApiClient(token);
 
-    // Load agent list
-    const agents = await client.listAgents();
-    if (agents.length === 0) {
-      showStatus(app, "No agents found. Create an agent first.", true);
-      return;
-    }
+    // Quick validation: try listing root
+    await client.ls("/home");
 
     app.innerHTML = "";
-    await mountApp(app, {
-      client,
-      agentId: agents[0].id,
-      agents,
-    });
+    mountApp(app, client);
   } catch (err) {
     showStatus(app, `Connection failed: ${(err as Error).message}`, true);
   }
 }
 
-async function authenticate() {
-  // 1. Try restoring saved token from CloudStorage
+async function authenticate(): Promise<string> {
+  // 1. Try saved token
   const saved = await restoreToken();
   if (saved) return saved;
 
@@ -48,20 +38,20 @@ async function authenticate() {
   const pairCode = url.searchParams.get("pair");
 
   if (!pairCode) {
-    throw new Error("No saved token and no pairing code. Send /files in Telegram to get started.");
+    throw new Error("No saved token. Send /files in Telegram to get started.");
   }
 
-  // 3. Exchange pairing code for token
-  const auth = await exchangePairCode(pairCode);
+  // 3. Exchange
+  const token = await exchangePairCode(pairCode);
 
-  // 4. Save to CloudStorage for future sessions
-  await saveToken(auth);
+  // 4. Save
+  await saveToken(token);
 
-  // 5. Clean up URL (remove pair param)
+  // 5. Clean URL
   url.searchParams.delete("pair");
   window.history.replaceState({}, "", url.toString());
 
-  return auth;
+  return token;
 }
 
 function showStatus(container: HTMLElement, message: string, isError = false) {
