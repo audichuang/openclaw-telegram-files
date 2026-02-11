@@ -56,7 +56,7 @@ export class GatewayWsClient {
               minProtocol: PROTOCOL_VERSION,
               maxProtocol: PROTOCOL_VERSION,
               client: {
-                id: "telegram-files",
+                id: "gateway-client",
                 displayName: "Telegram File Manager",
                 version: "0.1.0",
                 platform: "web",
