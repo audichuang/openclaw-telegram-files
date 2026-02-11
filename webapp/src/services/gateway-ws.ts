@@ -1,4 +1,4 @@
-/** Minimal JSON-RPC over WebSocket client for Gateway communication. */
+/** OpenClaw Gateway WebSocket client using the native frame protocol. */
 
 type PendingCall = {
   resolve: (result: unknown) => void;
@@ -10,6 +10,9 @@ export type FileEntry = {
   exists: boolean;
   sizeBytes?: number;
 };
+
+// Gateway protocol version (must match server)
+const PROTOCOL_VERSION = 3;
 
 export class GatewayWsClient {
   private ws: WebSocket | null = null;
@@ -24,7 +27,7 @@ export class GatewayWsClient {
     this.wsUrl = wsUrl;
   }
 
-  /** Connect to gateway and authenticate. */
+  /** Connect to gateway and authenticate using the native protocol. */
   connect(): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
@@ -36,26 +39,78 @@ export class GatewayWsClient {
 
       this.ws.onopen = async () => {
         try {
-          await this.call("connect", { token: this.token });
+          // Send connect frame with gateway protocol format
+          const id = String(this.nextId++);
+          const connectPromise = new Promise<void>((res, rej) => {
+            this.pending.set(id, {
+              resolve: () => res(),
+              reject: (err) => rej(err),
+            });
+          });
+
+          this.ws!.send(JSON.stringify({
+            type: "req",
+            id,
+            method: "connect",
+            params: {
+              minProtocol: PROTOCOL_VERSION,
+              maxProtocol: PROTOCOL_VERSION,
+              client: {
+                id: "telegram-files",
+                displayName: "Telegram File Manager",
+                version: "0.1.0",
+                platform: "web",
+                mode: "webchat",
+              },
+              auth: { token: this.token },
+              role: "operator",
+              scopes: [
+                "agents.list",
+                "agents.files.list",
+                "agents.files.get",
+                "agents.files.set",
+              ],
+              caps: [],
+            },
+          }));
+
+          // Timeout for connect
+          const timer = setTimeout(() => {
+            if (this.pending.has(id)) {
+              this.pending.delete(id);
+              rej(new Error("Connect timeout"));
+            }
+          }, 10000);
+
+          function rej(err: Error) {
+            clearTimeout(timer);
+            reject(err);
+          }
+
+          await connectPromise;
+          clearTimeout(timer);
           this.connected = true;
           resolve();
         } catch (err) {
-          reject(err);
+          reject(err instanceof Error ? err : new Error(String(err)));
         }
       };
 
       this.ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data as string) as {
+            type?: string;
             id?: string;
+            ok?: boolean;
             result?: unknown;
             error?: { message?: string };
           };
-          if (msg.id && this.pending.has(msg.id)) {
+          // Handle response frames
+          if (msg.type === "res" && msg.id && this.pending.has(msg.id)) {
             const p = this.pending.get(msg.id)!;
             this.pending.delete(msg.id);
-            if (msg.error) {
-              p.reject(new Error(msg.error.message ?? "RPC error"));
+            if (msg.ok === false || msg.error) {
+              p.reject(new Error(msg.error?.message ?? "Request failed"));
             } else {
               p.resolve(msg.result);
             }
@@ -71,18 +126,18 @@ export class GatewayWsClient {
         }
       };
 
-      this.ws.onclose = () => {
+      this.ws.onclose = (event) => {
         this.connected = false;
-        // Reject all pending calls
+        const reason = event.reason || `code ${event.code}`;
         for (const [, p] of this.pending) {
-          p.reject(new Error("Connection closed"));
+          p.reject(new Error(`Connection closed: ${reason}`));
         }
         this.pending.clear();
       };
     });
   }
 
-  /** Send a JSON-RPC call and wait for response. */
+  /** Send a request frame and wait for response. */
   call(method: string, params?: Record<string, unknown>): Promise<unknown> {
     return new Promise((resolve, reject) => {
       if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
@@ -91,7 +146,7 @@ export class GatewayWsClient {
       }
       const id = String(this.nextId++);
       this.pending.set(id, { resolve, reject });
-      this.ws.send(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
+      this.ws.send(JSON.stringify({ type: "req", id, method, params }));
 
       // Timeout after 15s
       setTimeout(() => {
