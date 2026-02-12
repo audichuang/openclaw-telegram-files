@@ -11,6 +11,7 @@ export function mountApp(container: HTMLElement, client: FilesApiClient): void {
   // Check URL for a start path (from /files /some/path)
   const urlParams = new URLSearchParams(window.location.search);
   const startPath = urlParams.get("path");
+  console.log("[telegram-files] URL:", window.location.href, "startPath:", startPath);
 
   // Ask the server for the default start directory
   client.home()
