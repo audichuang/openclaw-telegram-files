@@ -102,12 +102,15 @@ async function safePath(rawPath: string): Promise<string | null> {
     return await fs.realpath(resolved);
   } catch {
     // Path doesn't exist yet (write/mkdir) — resolve the deepest existing parent
+    // and preserve all non-existent path components as a tail suffix
     let current = resolved;
+    let tail = "";
     while (current !== path.dirname(current)) {
       const parent = path.dirname(current);
+      tail = tail ? path.join(path.basename(current), tail) : path.basename(current);
       try {
         const realParent = await fs.realpath(parent);
-        return path.join(realParent, path.basename(current));
+        return path.join(realParent, tail);
       } catch {
         current = parent;
       }
@@ -218,8 +221,8 @@ export function registerAll(api: OpenClawPluginApi) {
   };
   const allowedPaths = pluginConfig.allowedPaths ?? [];
 
-  // Derive CORS origin from externalUrl
-  let corsOrigin = "*";
+  // Derive CORS origin from externalUrl (deny cross-origin when unconfigured)
+  let corsOrigin = "null";
   if (pluginConfig.externalUrl) {
     try {
       const parsed = new URL(pluginConfig.externalUrl);
