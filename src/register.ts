@@ -196,7 +196,6 @@ export function registerAll(api: OpenClawPluginApi) {
 
       // Build Mini App URL with optional start path
       const startPath = ctx.args?.trim() || "";
-      console.log(`[telegram-files] /files command: args=${JSON.stringify(ctx.args)} startPath=${JSON.stringify(startPath)}`);
       let miniAppUrl = `${externalUrl}/plugins/telegram-files/?pair=${code}`;
       if (startPath) {
         miniAppUrl += `&path=${encodeURIComponent(startPath)}`;
