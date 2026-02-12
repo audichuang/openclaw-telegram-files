@@ -1,5 +1,15 @@
 import type { FilesApiClient, FileItem, SearchResult } from "../services/files-api.js";
 
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
+/** Join base path with a name, avoiding double slashes. */
+function joinPath(base: string, name: string): string {
+  return base.endsWith("/") ? `${base}${name}` : `${base}/${name}`;
+}
+
 /** Format bytes to human-readable size. */
 function formatSize(bytes: number): string {
   if (bytes <= 0) return "0 B";
@@ -26,6 +36,38 @@ function formatTime(mtimeMs: number): string {
   return `${months[date.getMonth()]} ${date.getDate()}`;
 }
 
+/** Create a delete button for a file or directory item. */
+function createDeleteButton(
+  itemPath: string,
+  itemName: string,
+  isDir: boolean,
+  client: FilesApiClient,
+  onRefresh: () => void,
+): HTMLButtonElement {
+  const btn = document.createElement("button");
+  btn.className = "item-delete-btn";
+  btn.textContent = "\u{1F5D1}";
+  btn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    if ((btn as HTMLButtonElement).disabled) return;
+    const confirmMsg = isDir
+      ? `Delete folder "${itemName}" and all its contents?`
+      : `Delete "${itemName}"?`;
+    if (!confirm(confirmMsg)) return;
+    btn.disabled = true;
+    try {
+      await client.delete(itemPath);
+      onRefresh();
+    } catch (err) {
+      btn.disabled = false;
+      alert(`Delete failed: ${errorMessage(err)}`);
+    }
+  });
+  return btn;
+}
+
+const MAX_DISPLAY_ITEMS = 500;
+
 /** Render the directory listing view. */
 export function renderFileList(params: {
   container: HTMLElement;
@@ -38,7 +80,7 @@ export function renderFileList(params: {
   onRefresh: () => void;
 }): void {
   const { container, currentPath, items, client, homeDir, onNavigate, onFileOpen, onRefresh } = params;
-  container.innerHTML = "";
+  container.replaceChildren();
 
   // --- Toolbar: path + hidden toggle ---
   const toolbar = document.createElement("div");
@@ -119,7 +161,7 @@ export function renderFileList(params: {
     }
     searchTimeout = setTimeout(async () => {
       const thisGeneration = ++searchGeneration;
-      searchResults.innerHTML = "";
+      searchResults.replaceChildren();
       const loadingMsg = document.createElement("div");
       loadingMsg.className = "status-message";
       loadingMsg.textContent = "Searching...";
@@ -133,10 +175,10 @@ export function renderFileList(params: {
         renderSearchResults(searchResults, resp.results, onNavigate, onFileOpen);
       } catch (err) {
         if (thisGeneration !== searchGeneration) return;
-        searchResults.innerHTML = "";
+        searchResults.replaceChildren();
         const errMsg = document.createElement("div");
         errMsg.className = "status-message error-text";
-        errMsg.textContent = `Search failed: ${(err as Error).message}`;
+        errMsg.textContent = `Search failed: ${errorMessage(err)}`;
         searchResults.appendChild(errMsg);
       }
     }, 300);
@@ -149,19 +191,22 @@ export function renderFileList(params: {
   // Filter hidden files
   const filteredItems = showHidden ? items : items.filter((i) => !i.name.startsWith("."));
 
-  if (filteredItems.length === 0) {
+  // Cap displayed items to prevent DOM overload on mobile
+  const displayItems = filteredItems.slice(0, MAX_DISPLAY_ITEMS);
+
+  if (displayItems.length === 0) {
     const empty = document.createElement("div");
     empty.className = "status-message";
     empty.textContent = "Empty directory";
     fileListEl.appendChild(empty);
   } else {
-    for (const item of filteredItems) {
+    for (const item of displayItems) {
       const el = document.createElement("div");
       el.className = "file-item";
 
       const icon = document.createElement("span");
       icon.className = "file-icon";
-      icon.textContent = item.isDir ? "📁" : item.isSymlink ? "🔗" : getFileIcon(item.name);
+      icon.textContent = item.isDir ? "\u{1F4C1}" : item.isSymlink ? "\u{1F517}" : getFileIcon(item.name);
 
       const info = document.createElement("div");
       info.className = "file-info";
@@ -178,68 +223,37 @@ export function renderFileList(params: {
         const parts: string[] = [];
         if (item.size !== undefined) parts.push(formatSize(item.size));
         if (item.mtime) parts.push(formatTime(item.mtime));
-        meta.textContent = parts.join(" · ");
+        meta.textContent = parts.join(" \u00B7 ");
         info.appendChild(meta);
       }
 
       el.appendChild(icon);
       el.appendChild(info);
 
+      const itemPath = joinPath(currentPath, item.name);
+
       if (item.isDir) {
-        el.addEventListener("click", () => {
-          const newPath = currentPath === "/" ? `/${item.name}` : `${currentPath}/${item.name}`;
-          onNavigate(newPath);
-        });
+        el.addEventListener("click", () => onNavigate(itemPath));
+        el.appendChild(createDeleteButton(itemPath, item.name, true, client, onRefresh));
       } else if (item.isFile) {
-        // Delete button
-        const deleteBtn = document.createElement("button");
-        deleteBtn.className = "item-delete-btn";
-        deleteBtn.textContent = "🗑";
-        deleteBtn.addEventListener("click", async (e) => {
-          e.stopPropagation();
-          const filePath = currentPath === "/" ? `/${item.name}` : `${currentPath}/${item.name}`;
-          if (!confirm(`Delete "${item.name}"?`)) return;
-          try {
-            await client.delete(filePath);
-            onRefresh();
-          } catch (err) {
-            alert(`Delete failed: ${(err as Error).message}`);
-          }
-        });
-        el.appendChild(deleteBtn);
-
-        el.addEventListener("click", () => {
-          const filePath = currentPath === "/" ? `/${item.name}` : `${currentPath}/${item.name}`;
-          onFileOpen(filePath);
-        });
-      }
-
-      // Directories also get a delete button
-      if (item.isDir) {
-        const deleteBtn = document.createElement("button");
-        deleteBtn.className = "item-delete-btn";
-        deleteBtn.textContent = "🗑";
-        deleteBtn.addEventListener("click", async (e) => {
-          e.stopPropagation();
-          const dirPath = currentPath === "/" ? `/${item.name}` : `${currentPath}/${item.name}`;
-          if (!confirm(`Delete folder "${item.name}" and all its contents?`)) return;
-          try {
-            await client.delete(dirPath);
-            onRefresh();
-          } catch (err) {
-            alert(`Delete failed: ${(err as Error).message}`);
-          }
-        });
-        el.appendChild(deleteBtn);
+        el.appendChild(createDeleteButton(itemPath, item.name, false, client, onRefresh));
+        el.addEventListener("click", () => onFileOpen(itemPath));
       }
 
       fileListEl.appendChild(el);
     }
   }
 
+  if (filteredItems.length > MAX_DISPLAY_ITEMS) {
+    const notice = document.createElement("div");
+    notice.className = "status-message";
+    notice.textContent = `Showing ${MAX_DISPLAY_ITEMS} of ${filteredItems.length} items. Use search to find specific files.`;
+    fileListEl.appendChild(notice);
+  }
+
   container.appendChild(fileListEl);
 
-  // --- Action buttons: New File + New Folder ---
+  // --- Action buttons: New File + New Folder + Upload ---
   const actionsBar = document.createElement("div");
   actionsBar.className = "actions-bar";
 
@@ -250,12 +264,11 @@ export function renderFileList(params: {
     const name = prompt("Enter file name:");
     if (!name || !name.trim()) return;
     const trimmed = name.trim();
-    if (trimmed.includes("/") || trimmed.includes("\0")) {
-      alert("File name cannot contain '/' or null characters.");
+    if (trimmed.includes("/") || trimmed.includes("\\") || trimmed.includes("\0") || trimmed === ".." || trimmed === ".") {
+      alert("Invalid file name.");
       return;
     }
-    const filePath = currentPath === "/" ? `/${trimmed}` : `${currentPath}/${trimmed}`;
-    onFileOpen(filePath);
+    onFileOpen(joinPath(currentPath, trimmed));
   });
 
   const newFolderBtn = document.createElement("button");
@@ -265,22 +278,25 @@ export function renderFileList(params: {
     const name = prompt("Enter folder name:");
     if (!name || !name.trim()) return;
     const trimmed = name.trim();
-    if (trimmed.includes("/") || trimmed.includes("\0")) {
-      alert("Folder name cannot contain '/' or null characters.");
+    if (trimmed.includes("/") || trimmed.includes("\\") || trimmed.includes("\0") || trimmed === ".." || trimmed === ".") {
+      alert("Invalid folder name.");
       return;
     }
-    const dirPath = currentPath === "/" ? `/${trimmed}` : `${currentPath}/${trimmed}`;
+    newFolderBtn.disabled = true;
+    newFolderBtn.textContent = "Creating...";
     try {
-      await client.mkdir(dirPath);
+      await client.mkdir(joinPath(currentPath, trimmed));
       onRefresh();
     } catch (err) {
-      alert(`Failed to create folder: ${(err as Error).message}`);
+      newFolderBtn.disabled = false;
+      newFolderBtn.textContent = "+ New Folder";
+      alert(`Failed to create folder: ${errorMessage(err)}`);
     }
   });
 
   const uploadBtn = document.createElement("button");
   uploadBtn.className = "action-btn";
-  uploadBtn.textContent = "↑ Upload";
+  uploadBtn.textContent = "\u2191 Upload";
   const fileInput = document.createElement("input");
   fileInput.type = "file";
   fileInput.multiple = true;
@@ -297,11 +313,11 @@ export function renderFileList(params: {
         await client.upload(currentPath, file);
       } catch (err) {
         failed++;
-        alert(`Upload failed (${file.name}): ${(err as Error).message}`);
+        alert(`Upload failed (${file.name}): ${errorMessage(err)}`);
       }
     }
     uploadBtn.disabled = false;
-    uploadBtn.textContent = "↑ Upload";
+    uploadBtn.textContent = "\u2191 Upload";
     fileInput.value = "";
     onRefresh();
   });
@@ -319,7 +335,7 @@ function renderSearchResults(
   onNavigate: (path: string) => void,
   onFileOpen: (path: string) => void,
 ): void {
-  container.innerHTML = "";
+  container.replaceChildren();
   if (results.length === 0) {
     const noResults = document.createElement("div");
     noResults.className = "status-message";
@@ -334,7 +350,7 @@ function renderSearchResults(
 
     const icon = document.createElement("span");
     icon.className = "file-icon";
-    icon.textContent = item.isDir ? "📁" : getFileIcon(item.name);
+    icon.textContent = item.isDir ? "\u{1F4C1}" : getFileIcon(item.name);
 
     const info = document.createElement("div");
     info.className = "file-info";
@@ -365,6 +381,7 @@ function renderSearchResults(
 }
 
 /** Load directory listing and render. */
+let loadGeneration = 0;
 export async function loadAndRenderFileList(params: {
   container: HTMLElement;
   client: FilesApiClient;
@@ -373,8 +390,9 @@ export async function loadAndRenderFileList(params: {
   onNavigate: (path: string) => void;
   onFileOpen: (path: string) => void;
 }): Promise<void> {
+  const thisGeneration = ++loadGeneration;
   const { container, client, dirPath, homeDir, onNavigate, onFileOpen } = params;
-  container.innerHTML = "";
+  container.replaceChildren();
   const loadingMsg = document.createElement("div");
   loadingMsg.className = "status-message";
   loadingMsg.textContent = "Loading...";
@@ -382,6 +400,7 @@ export async function loadAndRenderFileList(params: {
 
   try {
     const result = await client.ls(dirPath);
+    if (thisGeneration !== loadGeneration) return; // stale navigation
     renderFileList({
       container,
       currentPath: result.path,
@@ -393,23 +412,24 @@ export async function loadAndRenderFileList(params: {
       onRefresh: () => loadAndRenderFileList(params),
     });
   } catch (err) {
-    container.innerHTML = "";
+    if (thisGeneration !== loadGeneration) return;
+    container.replaceChildren();
     const errMsg = document.createElement("div");
     errMsg.className = "status-message error-text";
-    errMsg.textContent = `Failed: ${(err as Error).message}`;
+    errMsg.textContent = `Failed: ${errorMessage(err)}`;
     container.appendChild(errMsg);
   }
 }
 
 function getFileIcon(name: string): string {
   const lower = name.toLowerCase();
-  if (lower.endsWith(".md")) return "📝";
-  if (lower.endsWith(".json") || lower.endsWith(".json5")) return "⚙️";
-  if (lower.endsWith(".ts") || lower.endsWith(".js")) return "📜";
-  if (lower.endsWith(".sh")) return "🐚";
-  if (lower.endsWith(".log")) return "📋";
-  if (lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".gif") || lower.endsWith(".svg")) return "🖼️";
-  if (lower.endsWith(".zip") || lower.endsWith(".tar") || lower.endsWith(".gz")) return "📦";
-  if (lower.startsWith(".")) return "🔧";
-  return "📄";
+  if (lower.endsWith(".md")) return "\u{1F4DD}";
+  if (lower.endsWith(".json") || lower.endsWith(".json5")) return "\u2699\uFE0F";
+  if (lower.endsWith(".ts") || lower.endsWith(".js")) return "\u{1F4DC}";
+  if (lower.endsWith(".sh")) return "\u{1F41A}";
+  if (lower.endsWith(".log")) return "\u{1F4CB}";
+  if (lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".gif") || lower.endsWith(".svg")) return "\u{1F5BC}\uFE0F";
+  if (lower.endsWith(".zip") || lower.endsWith(".tar") || lower.endsWith(".gz")) return "\u{1F4E6}";
+  if (lower.startsWith(".")) return "\u{1F527}";
+  return "\u{1F4C4}";
 }

@@ -27,10 +27,20 @@ export async function exchangePairCode(pairCode: string): Promise<string> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ pairCode }),
   });
-  if (!resp.ok) {
-    const body = await resp.json().catch(() => ({}));
-    throw new Error((body as Record<string, string>).error ?? "Exchange failed");
+
+  let data: unknown;
+  const contentType = resp.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) {
+    data = await resp.json();
+  } else {
+    const text = await resp.text();
+    data = { error: text || `HTTP ${resp.status}` };
   }
-  const data = (await resp.json()) as { token: string };
-  return data.token;
+
+  if (!resp.ok || !data || typeof data !== "object" || !("token" in data)) {
+    throw new Error(
+      (data as Record<string, string> | null)?.error ?? "Exchange failed"
+    );
+  }
+  return (data as { token: string }).token;
 }

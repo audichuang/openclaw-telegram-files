@@ -4,8 +4,17 @@ import { FilesApiClient } from "./services/files-api.js";
 import { mountApp } from "./app.js";
 import type { TelegramWebApp } from "./services/telegram.js";
 
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
 async function main() {
-  const app = document.getElementById("app")!;
+  const app = document.getElementById("app");
+  if (!app) {
+    document.body.textContent = "Fatal: #app element not found";
+    return;
+  }
   const webapp = getTelegramWebApp();
 
   webapp.ready();
@@ -17,10 +26,17 @@ async function main() {
     const token = await authenticate();
     const client = new FilesApiClient(token);
 
-    app.innerHTML = "";
+    // Strip pair code from URL after successful auth
+    const url = new URL(window.location.href);
+    if (url.searchParams.has("pair")) {
+      url.searchParams.delete("pair");
+      history.replaceState(null, "", url.toString());
+    }
+
+    app.replaceChildren();
     mountApp(app, client);
   } catch (err) {
-    const msg = (err as Error).message;
+    const msg = errorMessage(err);
     if (isAuthError(msg)) {
       // Clear stale token so next open doesn't repeat
       try { await clearToken(); } catch { /* ignore */ }
@@ -81,7 +97,7 @@ async function authenticate(): Promise<string> {
 
 /** Show a friendly UI when the session has expired. */
 function showExpiredUI(container: HTMLElement, webapp: TelegramWebApp) {
-  container.innerHTML = "";
+  container.replaceChildren();
 
   const wrapper = document.createElement("div");
   wrapper.className = "status-message";
@@ -89,7 +105,7 @@ function showExpiredUI(container: HTMLElement, webapp: TelegramWebApp) {
   const icon = document.createElement("div");
   icon.style.fontSize = "48px";
   icon.style.marginBottom = "12px";
-  icon.textContent = "🔑";
+  icon.textContent = "\u{1F511}";
 
   const title = document.createElement("div");
   title.style.fontWeight = "600";
@@ -114,7 +130,7 @@ function showExpiredUI(container: HTMLElement, webapp: TelegramWebApp) {
 }
 
 function showStatus(container: HTMLElement, message: string, isError = false) {
-  container.innerHTML = "";
+  container.replaceChildren();
   const div = document.createElement("div");
   div.className = `status-message ${isError ? "error-text" : ""}`;
   div.textContent = message;

@@ -35,8 +35,12 @@ export function serveStaticAsset(
     return true;
   }
 
-  if (!fs.existsSync(resolved) || fs.statSync(resolved).isDirectory()) {
-    // SPA fallback: serve index.html for unknown paths
+  // Resolve symlinks and re-verify
+  let realPath: string;
+  try {
+    realPath = fs.realpathSync(resolved);
+  } catch {
+    // File doesn't exist — try SPA fallback
     const indexPath = path.join(distRoot, "index.html");
     if (fs.existsSync(indexPath)) {
       return sendFile(res, indexPath, ".html");
@@ -46,8 +50,30 @@ export function serveStaticAsset(
     return true;
   }
 
-  const ext = path.extname(resolved).toLowerCase();
-  return sendFile(res, resolved, ext);
+  if (!realPath.startsWith(fs.realpathSync(distRoot))) {
+    res.statusCode = 403;
+    res.end("Forbidden");
+    return true;
+  }
+
+  try {
+    if (fs.statSync(realPath).isDirectory()) {
+      const indexPath = path.join(distRoot, "index.html");
+      if (fs.existsSync(indexPath)) {
+        return sendFile(res, indexPath, ".html");
+      }
+      res.statusCode = 404;
+      res.end("Not Found");
+      return true;
+    }
+  } catch {
+    res.statusCode = 404;
+    res.end("Not Found");
+    return true;
+  }
+
+  const ext = path.extname(realPath).toLowerCase();
+  return sendFile(res, realPath, ext);
 }
 
 function sendFile(res: ServerResponse, filePath: string, ext: string): boolean {
@@ -58,6 +84,8 @@ function sendFile(res: ServerResponse, filePath: string, ext: string): boolean {
     "Content-Security-Policy",
     "frame-ancestors https://web.telegram.org https://*.telegram.org",
   );
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "no-referrer");
   // Immutable cache for hashed assets, short cache for html
   if (ext === ".html") {
     res.setHeader("Cache-Control", "no-cache");
@@ -66,6 +94,14 @@ function sendFile(res: ServerResponse, filePath: string, ext: string): boolean {
   }
   res.statusCode = 200;
   const stream = fs.createReadStream(filePath);
+  stream.on("error", () => {
+    if (!res.headersSent) {
+      res.statusCode = 500;
+      res.end("Internal Server Error");
+    } else {
+      res.destroy();
+    }
+  });
   stream.pipe(res);
   return true;
 }

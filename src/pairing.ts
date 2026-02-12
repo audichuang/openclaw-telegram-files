@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 
-const store = new Map<string, { token: string; expiresAt: number }>();
+const store = new Map<string, { expiresAt: number }>();
 const TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 function evictExpired(): void {
@@ -12,19 +12,19 @@ function evictExpired(): void {
   }
 }
 
-/** Create a one-time pairing code that maps to a gateway auth token. */
-export function createPairingCode(gatewayToken: string): string {
+/** Create a one-time pairing code. No longer stores the gateway token. */
+export function createPairingCode(): string {
   evictExpired();
   const code = crypto.randomBytes(32).toString("hex");
-  store.set(code, { token: gatewayToken, expiresAt: Date.now() + TTL_MS });
+  store.set(code, { expiresAt: Date.now() + TTL_MS });
   return code;
 }
 
-/** Exchange a pairing code for the gateway token. One-time use. */
-export function exchangePairingCode(code: string): string | null {
+/** Exchange a pairing code. One-time use. Returns true if valid. */
+export function exchangePairingCode(code: string): boolean {
   evictExpired();
   const entry = store.get(code);
-  if (!entry) return null;
+  if (!entry) return false;
   store.delete(code);
-  return entry.token;
+  return true;
 }

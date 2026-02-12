@@ -1,6 +1,11 @@
 import type { FilesApiClient } from "../services/files-api.js";
 import type { TelegramWebApp } from "../services/telegram.js";
 
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
 /** Render the file editor view. */
 export function renderFileEditor(params: {
   container: HTMLElement;
@@ -10,7 +15,7 @@ export function renderFileEditor(params: {
   onBack: () => void;
 }): void {
   const { container, client, filePath, webapp, onBack } = params;
-  container.innerHTML = "";
+  container.replaceChildren();
 
   const editorContainer = document.createElement("div");
   editorContainer.className = "editor-container";
@@ -51,6 +56,7 @@ export function renderFileEditor(params: {
   let dirty = false;
   let isBinary = false;
   let isNewFile = false;
+  let saving = false;
 
   textarea.addEventListener("input", () => {
     if (isBinary) return;
@@ -78,7 +84,8 @@ export function renderFileEditor(params: {
 
   // Save
   const handleSave = async () => {
-    if (isBinary) return;
+    if (isBinary || saving) return;
+    saving = true;
     webapp.MainButton.showProgress(true);
     webapp.MainButton.disable();
     statusEl.textContent = "Saving...";
@@ -91,8 +98,9 @@ export function renderFileEditor(params: {
       statusEl.textContent = "Saved";
       webapp.MainButton.hide();
     } catch (err) {
-      statusEl.textContent = `Error: ${(err as Error).message}`;
+      statusEl.textContent = `Error: ${errorMessage(err)}`;
     } finally {
+      saving = false;
       webapp.MainButton.hideProgress();
       webapp.MainButton.enable();
     }
@@ -116,7 +124,7 @@ export function renderFileEditor(params: {
       textarea.disabled = false;
       statusEl.textContent = "Ready";
     } catch (err) {
-      const msg = (err as Error).message;
+      const msg = errorMessage(err);
 
       // Binary file detection
       if (msg.includes("binary file")) {
@@ -129,7 +137,7 @@ export function renderFileEditor(params: {
 
         const iconEl = document.createElement("div");
         iconEl.className = "binary-icon";
-        iconEl.textContent = "🔒";
+        iconEl.textContent = "\u{1F512}";
 
         const titleEl = document.createElement("div");
         titleEl.className = "binary-title";

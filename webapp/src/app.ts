@@ -7,6 +7,7 @@ export function mountApp(container: HTMLElement, client: FilesApiClient): void {
   const webapp = getTelegramWebApp();
   let currentPath = "/";
   let homeDir = "/";
+  let currentBackHandler: (() => void) | null = null;
 
   // Check URL for a start path (from /files /some/path)
   const urlParams = new URLSearchParams(window.location.search);
@@ -22,6 +23,12 @@ export function mountApp(container: HTMLElement, client: FilesApiClient): void {
 
   function showDir(dirPath: string) {
     currentPath = dirPath;
+
+    // Clean up previous back handler to prevent handler accumulation
+    if (currentBackHandler) {
+      webapp.BackButton.offClick(currentBackHandler);
+      currentBackHandler = null;
+    }
     webapp.BackButton.hide();
     webapp.MainButton.hide();
 
@@ -30,9 +37,11 @@ export function mountApp(container: HTMLElement, client: FilesApiClient): void {
       webapp.BackButton.show();
       const handleBack = () => {
         webapp.BackButton.offClick(handleBack);
+        currentBackHandler = null;
         const parent = dirPath.substring(0, dirPath.lastIndexOf("/")) || "/";
         showDir(parent);
       };
+      currentBackHandler = handleBack;
       webapp.BackButton.onClick(handleBack);
     }
 
@@ -47,6 +56,11 @@ export function mountApp(container: HTMLElement, client: FilesApiClient): void {
   }
 
   function showEditor(filePath: string) {
+    // Clean up back handler before entering editor
+    if (currentBackHandler) {
+      webapp.BackButton.offClick(currentBackHandler);
+      currentBackHandler = null;
+    }
     renderFileEditor({
       container,
       client,
