@@ -40,6 +40,12 @@ export function renderFileList(params: {
   const { container, currentPath, items, client, homeDir, onNavigate, onFileOpen, onRefresh } = params;
   container.innerHTML = "";
 
+  // DEBUG: show URL info
+  const dbg = document.createElement("div");
+  dbg.style.cssText = "font-size:10px;color:#999;word-break:break-all;padding:4px 8px;background:#f5f5f5;border-radius:4px;margin-bottom:4px;";
+  dbg.textContent = `URL: ${window.location.href}`;
+  container.appendChild(dbg);
+
   // --- Toolbar: path + hidden toggle ---
   const toolbar = document.createElement("div");
   toolbar.className = "list-toolbar";
