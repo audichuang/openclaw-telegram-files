@@ -1,9 +1,5 @@
 import type { FilesApiClient, FileItem, SearchResult } from "../services/files-api.js";
-
-function errorMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  return String(err);
-}
+import { errorMessage } from "../utils.js";
 
 /** Join base path with a name, avoiding double slashes. */
 function joinPath(base: string, name: string): string {

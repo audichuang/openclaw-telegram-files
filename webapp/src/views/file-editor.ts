@@ -1,10 +1,6 @@
 import type { FilesApiClient } from "../services/files-api.js";
 import type { TelegramWebApp } from "../services/telegram.js";
-
-function errorMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  return String(err);
-}
+import { errorMessage } from "../utils.js";
 
 /** Render the file editor view. */
 export function renderFileEditor(params: {
