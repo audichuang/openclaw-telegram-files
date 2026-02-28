@@ -1,12 +1,33 @@
 {
-  "name": "@openclaw/telegram-files",
-  "version": "2026.2.10",
-  "private": true,
+  "name": "openclaw-telegram-files",
+  "version": "0.1.0",
   "description": "Telegram Mini App for managing agent workspace files on mobile",
   "type": "module",
-  "devDependencies": {
-    "openclaw": "workspace:*"
+  "main": "./index.ts",
+  "scripts": {
+    "build": "cd webapp && npx vite build",
+    "prepublishOnly": "npm run build"
   },
+  "files": [
+    "index.ts",
+    "src/",
+    "dist/",
+    "webapp/",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/audichuang/openclaw-telegram-files.git"
+  },
+  "keywords": [
+    "openclaw",
+    "plugin",
+    "telegram",
+    "file-manager",
+    "mini-app"
+  ],
   "openclaw": {
     "extensions": [
       "./index.ts"

@@ -1,4 +1,7 @@
-# @openclaw/telegram-files
+# openclaw-telegram-files
+
+[![npm version](https://img.shields.io/npm/v/openclaw-telegram-files.svg)](https://www.npmjs.com/package/openclaw-telegram-files)
+[![GitHub](https://img.shields.io/github/license/audichuang/openclaw-telegram-files)](https://github.com/audichuang/openclaw-telegram-files)
 
 Telegram Mini App for managing agent workspace files on mobile.
 
@@ -18,7 +21,7 @@ All operations are secured with token-based authentication, path whitelisting, a
 ## Installation
 
 ```bash
-openclaw plugins install @openclaw/telegram-files
+openclaw plugins install openclaw-telegram-files
 ```
 
 ## Quick Setup
@@ -135,16 +138,21 @@ telegram-files/
 ├── package.json
 ├── index.ts                 # Plugin entry point
 ├── src/
-│   ├── register.ts          # Command + HTTP API handler
+│   ├── register.ts          # Command + HTTP API registration
+│   ├── api-handlers.ts      # File operation handlers (ls/read/write/delete/search)
+│   ├── auth.ts              # Token auth (issue/check/evict)
 │   ├── pairing.ts           # One-time pairing code store
+│   ├── path-utils.ts        # Path traversal prevention + search
 │   ├── runtime.ts           # OpenClaw runtime bridge
 │   └── static-server.ts     # Static file server for webapp
+├── dist/webapp/             # Built webapp assets (auto-generated)
 └── webapp/
     ├── index.html
     ├── vite.config.ts
     └── src/
         ├── main.ts           # Webapp entry
         ├── app.ts            # Routing (dir list ↔ editor)
+        ├── utils.ts          # Utility helpers
         ├── services/
         │   ├── auth.ts       # Token exchange
         │   ├── files-api.ts  # REST client
