@@ -29,6 +29,14 @@ All operations are secured with token-based authentication, path whitelisting, a
 openclaw plugins install openclaw-telegram-files
 ```
 
+> **Note:** The npm package name is `openclaw-telegram-files`, but the plugin registers under the id `telegram-files`. All config keys use `telegram-files` (e.g. `plugins.entries.telegram-files.config.*`).
+
+Add `--pin` to lock the exact version in your config, so `openclaw plugins update --all` will not auto-upgrade without confirmation:
+
+```bash
+openclaw plugins install openclaw-telegram-files --pin
+```
+
 ## Setup Guide
 
 ### Step 1: Expose gateway over HTTPS
@@ -45,10 +53,7 @@ Telegram Mini Apps require HTTPS. Choose one of the following methods:
 # macOS: brew install tailscale
 # Linux: curl -fsSL https://tailscale.com/install.sh | sh
 
-# Enable HTTPS certificates
-tailscale cert
-
-# Expose gateway port (default: 3117)
+# Expose gateway port (default: 3117) via Funnel
 tailscale funnel 3117
 ```
 
@@ -58,6 +63,8 @@ Check your hostname with:
 ```bash
 tailscale status | head -1
 ```
+
+> **Important:** Tailscale Funnel is required for public HTTPS access. A regular Tailscale MagicDNS URL (`https://<hostname>.<tailnet>.ts.net` without Funnel) is only reachable within your tailnet — Telegram's servers cannot reach it and the Mini App will fail to load.
 
 </details>
 
@@ -102,6 +109,8 @@ ngrok http 3117
 # Set your HTTPS URL (replace with your actual URL)
 openclaw config set plugins.entries.telegram-files.config.externalUrl "https://your-host.example.com"
 ```
+
+> **Tip:** To confirm your gateway port, run `openclaw config get gateway.port` (default is `3117`). Make sure your HTTPS tunnel points to the same port.
 
 ### Step 3: (Optional) Restrict filesystem access
 
