@@ -18,34 +18,114 @@ This plugin adds a `/files` command that opens a Telegram Mini App (WebApp) dire
 
 All operations are secured with token-based authentication, path whitelisting, and automatic token expiration.
 
+## Prerequisites
+
+- [OpenClaw](https://github.com/openclaw/openclaw) with Telegram channel configured
+- Your gateway must be reachable over **HTTPS** (required by Telegram Mini Apps)
+
 ## Installation
 
 ```bash
 openclaw plugins install openclaw-telegram-files
 ```
 
-## Quick Setup
+## Setup Guide
 
-1. Expose your gateway over HTTPS (e.g. via Tailscale Funnel, Cloudflare Tunnel, or ngrok):
+### Step 1: Expose gateway over HTTPS
 
-   ```bash
-   # Example with Tailscale
-   tailscale funnel 3117
-   ```
+Telegram Mini Apps require HTTPS. Choose one of the following methods:
 
-2. Configure the plugin with your external URL:
+<details>
+<summary><b>Option A: Tailscale Funnel (recommended for personal use)</b></summary>
 
-   ```bash
-   openclaw config set plugins.entries.telegram-files.config.externalUrl "https://your-host.ts.net"
-   ```
+[Tailscale Funnel](https://tailscale.com/kb/1223/funnel) shares your local service over HTTPS without port forwarding or DNS configuration.
 
-3. (Optional) Restrict filesystem access to specific directories:
+```bash
+# Install Tailscale (if not installed)
+# macOS: brew install tailscale
+# Linux: curl -fsSL https://tailscale.com/install.sh | sh
 
-   ```bash
-   openclaw config set plugins.entries.telegram-files.config.allowedPaths '["/home/user", "/opt/projects"]'
-   ```
+# Enable HTTPS certificates
+tailscale cert
 
-4. Restart the gateway, then send `/files` in Telegram.
+# Expose gateway port (default: 3117)
+tailscale funnel 3117
+```
+
+Your URL will be: `https://<hostname>.<tailnet>.ts.net`
+
+Check your hostname with:
+```bash
+tailscale status | head -1
+```
+
+</details>
+
+<details>
+<summary><b>Option B: Cloudflare Tunnel (recommended for always-on servers)</b></summary>
+
+[Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) creates a secure tunnel without opening ports.
+
+```bash
+# Install cloudflared
+# macOS: brew install cloudflared
+# Linux: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/get-started/
+
+# Quick tunnel (no Cloudflare account needed)
+cloudflared tunnel --url http://localhost:3117
+
+# Or create a named tunnel (requires Cloudflare account)
+cloudflared tunnel create openclaw
+cloudflared tunnel route dns openclaw openclaw.yourdomain.com
+cloudflared tunnel run openclaw
+```
+
+</details>
+
+<details>
+<summary><b>Option C: ngrok (quick testing)</b></summary>
+
+```bash
+# Install ngrok
+# https://ngrok.com/download
+
+ngrok http 3117
+```
+
+> **Note**: Free ngrok URLs change on every restart. For persistent use, consider Tailscale or Cloudflare.
+
+</details>
+
+### Step 2: Configure the plugin
+
+```bash
+# Set your HTTPS URL (replace with your actual URL)
+openclaw config set plugins.entries.telegram-files.config.externalUrl "https://your-host.example.com"
+```
+
+### Step 3: (Optional) Restrict filesystem access
+
+By default, only the user's home directory is accessible. To limit or expand access:
+
+```bash
+# Allow specific directories only
+openclaw config set plugins.entries.telegram-files.config.allowedPaths '["/home/user/projects", "/opt/openclaw"]'
+
+# macOS example
+openclaw config set plugins.entries.telegram-files.config.allowedPaths '["/Users/you/Documents", "/Users/you/Projects"]'
+```
+
+### Step 4: Restart and verify
+
+```bash
+# Restart the gateway to load the plugin
+openclaw restart
+
+# Verify plugin is loaded
+openclaw plugins list
+```
+
+Then send `/files` to your bot in Telegram. You should see a button to open the file manager.
 
 ## Configuration
 
