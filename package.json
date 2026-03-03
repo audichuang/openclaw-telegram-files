@@ -1,6 +1,6 @@
 {
   "name": "openclaw-telegram-files",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Telegram Mini App for managing agent workspace files on mobile",
   "type": "module",
   "main": "./index.ts",

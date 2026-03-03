@@ -1,5 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import fs from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { createPairingCode } from "./pairing.js";
@@ -26,6 +27,8 @@ export type TelegramFilesPluginConfig = {
 	allowedPaths?: string[];
 };
 
+const PREFIX = "/plugins/telegram-files";
+
 export function registerAll(api: OpenClawPluginApi) {
 	const raw = api.pluginConfig as Record<string, unknown> | undefined;
 	const pluginConfig: TelegramFilesPluginConfig = {
@@ -49,6 +52,43 @@ export function registerAll(api: OpenClawPluginApi) {
 			// Malformed URL — keep "null" to deny cross-origin requests
 		}
 	}
+
+	// ─── Helper: CORS preflight handler wrapper ────────────────────────
+	const withCors = (
+		handler: (req: IncomingMessage, res: ServerResponse) => Promise<void> | void,
+	) => {
+		return async (req: IncomingMessage, res: ServerResponse) => {
+			if (req.method === "OPTIONS") {
+				res.setHeader("Access-Control-Allow-Origin", corsOrigin);
+				res.setHeader(
+					"Access-Control-Allow-Methods",
+					"GET, POST, PUT, DELETE, OPTIONS",
+				);
+				res.setHeader(
+					"Access-Control-Allow-Headers",
+					"Content-Type, Authorization",
+				);
+				res.setHeader("Referrer-Policy", "no-referrer");
+				res.statusCode = 204;
+				res.end();
+				return;
+			}
+			await handler(req, res);
+		};
+	};
+
+	// ─── Helper: auth-guarded handler wrapper ──────────────────────────
+	const withAuth = (
+		handler: (req: IncomingMessage, res: ServerResponse) => Promise<void> | void,
+	) => {
+		return async (req: IncomingMessage, res: ServerResponse) => {
+			if (!checkAuth(req)) {
+				jsonResponse(res, 401, { error: "unauthorized" }, corsOrigin);
+				return;
+			}
+			await handler(req, res);
+		};
+	};
 
 	// 1. Register /files command
 	api.registerCommand({
@@ -77,7 +117,7 @@ export function registerAll(api: OpenClawPluginApi) {
 
 			// Build Mini App URL with optional start path
 			const startPath = ctx.args?.trim() || "";
-			let miniAppUrl = `${externalUrl}/plugins/telegram-files/?pair=${code}`;
+			let miniAppUrl = `${externalUrl}${PREFIX}/?pair=${code}`;
 			if (startPath) {
 				miniAppUrl += `&path=${encodeURIComponent(startPath)}`;
 			}
@@ -122,92 +162,157 @@ export function registerAll(api: OpenClawPluginApi) {
 		},
 	});
 
-	// 2. Register HTTP handler
-	api.registerHttpHandler(
-		async (req: IncomingMessage, res: ServerResponse) => {
-			const url = new URL(
-				req.url ?? "/",
-				`http://${req.headers.host ?? "localhost"}`,
-			);
-			const prefix = "/plugins/telegram-files";
-
-			if (!url.pathname.startsWith(prefix)) {
-				return false;
+	// 2. Register HTTP routes (one per API endpoint)
+	// Token exchange (no auth required, CORS enabled)
+	api.registerHttpRoute({
+		path: `${PREFIX}/api/exchange`,
+		handler: withCors(async (req, res) => {
+			if (req.method !== "POST") {
+				jsonResponse(res, 405, { error: "method not allowed" }, corsOrigin);
+				return;
 			}
+			await handleExchange(req, res, corsOrigin);
+		}),
+	});
 
-			const subPath = url.pathname.slice(prefix.length) || "/";
-
-			// CORS preflight
-			if (req.method === "OPTIONS") {
-				res.setHeader("Access-Control-Allow-Origin", corsOrigin);
-				res.setHeader(
-					"Access-Control-Allow-Methods",
-					"GET, POST, PUT, DELETE, OPTIONS",
-				);
-				res.setHeader(
-					"Access-Control-Allow-Headers",
-					"Content-Type, Authorization",
-				);
-				res.setHeader("Referrer-Policy", "no-referrer");
-				res.statusCode = 204;
-				res.end();
-				return true;
+	// GET /api/home
+	api.registerHttpRoute({
+		path: `${PREFIX}/api/home`,
+		handler: withCors(withAuth((req, res) => {
+			if (req.method !== "GET") {
+				jsonResponse(res, 405, { error: "method not allowed" }, corsOrigin);
+				return;
 			}
+			handleHome(res, allowedPaths, corsOrigin);
+		})),
+	});
 
-			// Token exchange (no auth required)
-			if (req.method === "POST" && subPath === "/api/exchange") {
-				await handleExchange(req, res, corsOrigin);
-				return true;
+	// GET /api/ls
+	api.registerHttpRoute({
+		path: `${PREFIX}/api/ls`,
+		handler: withCors(withAuth(async (req, res) => {
+			if (req.method !== "GET") {
+				jsonResponse(res, 405, { error: "method not allowed" }, corsOrigin);
+				return;
 			}
+			const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+			await handleLs(url, res, allowedPaths, corsOrigin);
+		})),
+	});
 
-			// All other API endpoints require auth
-			if (subPath.startsWith("/api/")) {
-				if (!checkAuth(req)) {
-					jsonResponse(
-						res,
-						401,
-						{ error: "unauthorized" },
-						corsOrigin,
-					);
-					return true;
-				}
-
-				if (req.method === "GET" && subPath === "/api/home") {
-					handleHome(res, allowedPaths, corsOrigin);
-				} else if (req.method === "GET" && subPath === "/api/ls") {
-					await handleLs(url, res, allowedPaths, corsOrigin);
-				} else if (req.method === "GET" && subPath === "/api/read") {
-					await handleRead(url, res, allowedPaths, corsOrigin);
-				} else if (req.method === "POST" && subPath === "/api/write") {
-					await handleWrite(req, res, allowedPaths, corsOrigin);
-				} else if (req.method === "POST" && subPath === "/api/upload") {
-					await handleUpload(req, url, res, allowedPaths, corsOrigin);
-				} else if (req.method === "POST" && subPath === "/api/mkdir") {
-					await handleMkdir(req, res, allowedPaths, corsOrigin);
-				} else if (
-					req.method === "DELETE" &&
-					subPath === "/api/delete"
-				) {
-					await handleDelete(req, url, res, allowedPaths, corsOrigin);
-				} else if (req.method === "GET" && subPath === "/api/search") {
-					await handleSearch(url, res, allowedPaths, corsOrigin);
-				} else {
-					jsonResponse(
-						res,
-						404,
-						{ error: "unknown API endpoint" },
-						corsOrigin,
-					);
-				}
-				return true;
+	// GET /api/read
+	api.registerHttpRoute({
+		path: `${PREFIX}/api/read`,
+		handler: withCors(withAuth(async (req, res) => {
+			if (req.method !== "GET") {
+				jsonResponse(res, 405, { error: "method not allowed" }, corsOrigin);
+				return;
 			}
+			const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+			await handleRead(url, res, allowedPaths, corsOrigin);
+		})),
+	});
 
-			// Static assets (GET)
-			if (req.method === "GET") {
-				return await serveStaticAsset(req, res, subPath, DIST_WEBAPP);
+	// POST /api/write
+	api.registerHttpRoute({
+		path: `${PREFIX}/api/write`,
+		handler: withCors(withAuth(async (req, res) => {
+			if (req.method !== "POST") {
+				jsonResponse(res, 405, { error: "method not allowed" }, corsOrigin);
+				return;
 			}
+			await handleWrite(req, res, allowedPaths, corsOrigin);
+		})),
+	});
 
-			return false;
-		},
-	);
+	// POST /api/upload
+	api.registerHttpRoute({
+		path: `${PREFIX}/api/upload`,
+		handler: withCors(withAuth(async (req, res) => {
+			if (req.method !== "POST") {
+				jsonResponse(res, 405, { error: "method not allowed" }, corsOrigin);
+				return;
+			}
+			const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+			await handleUpload(req, url, res, allowedPaths, corsOrigin);
+		})),
+	});
+
+	// POST /api/mkdir
+	api.registerHttpRoute({
+		path: `${PREFIX}/api/mkdir`,
+		handler: withCors(withAuth(async (req, res) => {
+			if (req.method !== "POST") {
+				jsonResponse(res, 405, { error: "method not allowed" }, corsOrigin);
+				return;
+			}
+			await handleMkdir(req, res, allowedPaths, corsOrigin);
+		})),
+	});
+
+	// DELETE /api/delete
+	api.registerHttpRoute({
+		path: `${PREFIX}/api/delete`,
+		handler: withCors(withAuth(async (req, res) => {
+			if (req.method !== "DELETE") {
+				jsonResponse(res, 405, { error: "method not allowed" }, corsOrigin);
+				return;
+			}
+			const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+			await handleDelete(req, url, res, allowedPaths, corsOrigin);
+		})),
+	});
+
+	// GET /api/search
+	api.registerHttpRoute({
+		path: `${PREFIX}/api/search`,
+		handler: withCors(withAuth(async (req, res) => {
+			if (req.method !== "GET") {
+				jsonResponse(res, 405, { error: "method not allowed" }, corsOrigin);
+				return;
+			}
+			const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+			await handleSearch(url, res, allowedPaths, corsOrigin);
+		})),
+	});
+
+	// 3. Register static webapp routes
+	// SPA index.html (with and without trailing slash)
+	const spaHandler = async (req: IncomingMessage, res: ServerResponse) => {
+		if (req.method !== "GET") {
+			res.statusCode = 405;
+			res.end("Method Not Allowed");
+			return;
+		}
+		await serveStaticAsset(req, res, "/", DIST_WEBAPP);
+	};
+
+	api.registerHttpRoute({ path: `${PREFIX}/`, handler: spaHandler });
+	api.registerHttpRoute({ path: PREFIX, handler: spaHandler });
+
+	// Dynamically register routes for hashed static assets (JS, CSS, etc.)
+	// Since registerHttpRoute uses exact path matching, we scan dist/webapp/
+	// at startup and register each asset file individually.
+	try {
+		const assetsDir = path.join(DIST_WEBAPP, "assets");
+		if (fs.existsSync(assetsDir)) {
+			const assetFiles = fs.readdirSync(assetsDir);
+			for (const file of assetFiles) {
+				const assetPath = `${PREFIX}/assets/${file}`;
+				api.registerHttpRoute({
+					path: assetPath,
+					handler: async (req: IncomingMessage, res: ServerResponse) => {
+						if (req.method !== "GET") {
+							res.statusCode = 405;
+							res.end("Method Not Allowed");
+							return;
+						}
+						await serveStaticAsset(req, res, `/assets/${file}`, DIST_WEBAPP);
+					},
+				});
+			}
+		}
+	} catch {
+		// Non-fatal: static assets may not be built yet
+	}
 }
